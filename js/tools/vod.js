@@ -168,6 +168,7 @@
     }
 
     function appendLog(msg) {
+      if (/^\s*Aborted\(\)\s*$/.test(msg)) return; // ffmpeg.wasm teardown noise
       logEl.hidden = false;
       var lines = (logEl.textContent ? logEl.textContent.split('\n') : []);
       lines.push(msg);
