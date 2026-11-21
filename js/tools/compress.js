@@ -32,18 +32,16 @@
       '<button class="btn block" type="button" id="cz-preset">콘텐츠 규격 (JPG/PNG · 2MB 이하)</button>' +
       '<p class="hint" id="cz-preset-hint">스카이파크·굿티브이 콘텐츠 입력 규격에 맞춰, 2MB 이하가 될 때까지 품질과 해상도를 자동으로 낮춥니다.</p>' +
 
-      '<div id="cz-manual">' +
-      '<div class="field" style="margin-top:12px"><label>포맷</label>' +
+      '<div class="field" id="cz-format-field" style="margin-top:12px"><label>포맷</label>' +
       '<select id="cz-format">' +
-      '<option value="original">원본 유지</option>' +
+      '<option value="original">원본 유지 (프리셋: 자동)</option>' +
       '<option value="jpg">JPG (사진에 적합)</option>' +
       '<option value="png">PNG (무손실)</option>' +
       '<option value="webp">WebP (가장 작음)</option>' +
       '</select></div>' +
 
-      '<div class="field"><label>품질 <span class="val" id="cz-q-val">82%</span></label>' +
+      '<div class="field" id="cz-quality-field"><label>품질 <span class="val" id="cz-q-val">82%</span></label>' +
       '<input type="range" id="cz-quality" min="10" max="100" step="1" value="82"></div>' +
-      '</div>' +
 
       '<div class="field" style="margin-bottom:0"><label>최대 가로폭</label>' +
       '<select id="cz-width">' +
@@ -129,6 +127,9 @@
 
     function outputType(item) {
       if (state.preset) {
+        var fmtChoice = formatEl.value;
+        if (fmtChoice === 'jpg') return 'image/jpeg';
+        if (fmtChoice === 'png') return 'image/png';
         return /png$/i.test(item.file.type) || /\.png$/i.test(item.name) ? 'image/png' : 'image/jpeg';
       }
       var fmt = formatEl.value;
@@ -195,12 +196,14 @@
       if (!state.items.length) { render(); return; }
       var token = ++state.running;
       var queue = state.items.slice();
+      results.dataset.busy = '1';
       render();
       for (var i = 0; i < queue.length; i++) {
         if (token !== state.running) return; // superseded by a newer run
         await processItem(queue[i]);
         render();
       }
+      if (token === state.running) results.dataset.busy = '0';
     }
 
     function typeExt(type) {
@@ -212,7 +215,7 @@
       countEl.textContent = state.items.length + '장';
       modeEl.textContent = state.preset ? '콘텐츠 규격 · 2MB' : '수동 설정';
 
-      if (!state.items.length) { results.innerHTML = ''; return; }
+      if (!state.items.length) { results.innerHTML = ''; results.dataset.busy = '0'; return; }
 
       var done = state.items.filter(function (i) { return i.out; });
       var origTotal = state.items.reduce(function (s, i) { return s + i.origSize; }, 0);
@@ -295,11 +298,13 @@
       presetBtn.textContent = state.preset
         ? '콘텐츠 규격 사용 중 · 2MB 이하 (해제하려면 누르세요)'
         : '콘텐츠 규격 (JPG/PNG · 2MB 이하)';
-      formatEl.disabled = state.preset;
       qualityEl.disabled = state.preset;
-      $('#cz-manual', root).hidden = state.preset;
+      $('#cz-quality-field', root).hidden = state.preset;
+      var webpOpt = formatEl.querySelector('option[value="webp"]');
+      if (webpOpt) webpOpt.disabled = state.preset;
+      if (state.preset && formatEl.value === 'webp') formatEl.value = 'original';
       presetHint.textContent = state.preset
-        ? '2,097,152 bytes 이하가 될 때까지 품질과 해상도를 단계적으로 낮춥니다. 원본이 PNG면 PNG, 그 외에는 JPG로 저장합니다.'
+        ? '선택한 포맷(원본 유지는 원본에 맞춤)으로 2,097,152 bytes 이하가 될 때까지 품질과 해상도를 단계적으로 낮춥니다.'
         : '스카이파크·굿티브이 콘텐츠 입력 규격에 맞춰, 2MB 이하가 될 때까지 품질과 해상도를 자동으로 낮춥니다.';
       processAll();
     });

@@ -384,6 +384,23 @@ def part_compress(page):
             check(f"{n} <= 2MB", len(blob) <= 2 * 1024 * 1024, str(len(blob)))
             check(f"{n} image opens", Image.open(__import__("io").BytesIO(blob)).size[0] > 0)
 
+    # explicit PNG inside the preset: JPG sources must come out as PNG under 2MB
+    page.select_option("#cz-format", "png")
+    page.wait_for_timeout(300)
+    page.wait_for_function("document.querySelector('#cz-results').dataset.busy === '0'", timeout=120000)
+    with page.expect_download() as dl:
+        page.click("#cz-zip")
+    ppath = os.path.join(SHOTS, "compressed-png.zip")
+    dl.value.save_as(ppath)
+    with zipfile.ZipFile(ppath) as z:
+        names = z.namelist()
+        check("preset png zip names", all(n.lower().endswith(".png") for n in names), str(names))
+        for n in names:
+            blob = z.read(n)
+            check(f"{n} png <= 2MB", len(blob) <= 2 * 1024 * 1024, str(len(blob)))
+            im = Image.open(__import__("io").BytesIO(blob))
+            check(f"{n} really PNG", im.format == "PNG", im.format)
+
 
 # ---------------------------------------------------------------- pdf
 def part_pdf(page):
