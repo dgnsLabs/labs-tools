@@ -43,7 +43,7 @@ def main():
         home = page.inner_text("#home")
         check("live home has 8 cards", page.locator(".tool-card").count() == 8)
         check("live home uses plain Korean labels", "서버 전송" in home and "앱처럼 쓰기" in home and "[영상]" in home, home[:120])
-        check("live home shows v1.3.1", "v1.3.1" in home)
+        check("live home shows v1.3.2", "v1.3.2" in home)
         page.add_style_tag(content=".appbar{position:static !important}")
         page.screenshot(path=os.path.join(SHOTS, "live-home.png"), full_page=True)
 
@@ -58,11 +58,13 @@ def main():
             const t = await (await fetch('sw.js', {cache: 'no-store'})).text();
             return (t.match(/labs-tools-app-v[0-9.]+/) || [''])[0];
         }""")
-        check("live sw cache is v1.3.1", swver == "labs-tools-app-v1.3.1", swver)
+        check("live sw cache is v1.3.2", swver == "labs-tools-app-v1.3.2", swver)
 
         # 소리 없는 샘플 → WebCodecs 가속 경로
         page.set_input_files("#vod-file", os.path.join(FIX, "sample-silent.mp4"))
         page.wait_for_timeout(700)
+        check("live settings are collapsed", not page.locator("#vod-settings").evaluate("(element) => element.open"))
+        check("live defaults to automatic", page.locator("#vod-size-mode").input_value() == "auto")
         page.click("#vod-go")
         page.wait_for_selector("#vod-result .vod-verdict", timeout=180000)
         engine = page.get_attribute("#tool-vod", "data-engine")
@@ -97,6 +99,9 @@ def main():
         # 소리 있는 샘플 → AAC 인코더가 없으면 ffmpeg 폴백 (두 경로 모두 규격은 같다)
         page.set_input_files("#vod-file", os.path.join(FIX, "sample.mp4"))
         page.wait_for_timeout(700)
+        page.locator("#vod-settings summary").click()
+        page.select_option("#vod-size-mode", "custom")
+        page.fill("#vod-target-mb", "1")
         page.click("#vod-go")
         page.wait_for_selector("#vod-result .vod-verdict", timeout=240000)
         engine2 = page.get_attribute("#tool-vod", "data-engine")
@@ -110,6 +115,8 @@ def main():
         data = open(out2, "rb").read()
         check("live audio mp4 has avc1", b"avc1" in data, data[:16])
         check("live audio mp4 has mp4a", b"mp4a" in data, data[:16])
+        check("live custom size matches actual download",
+              len(data) <= 1_000_000 and "목표 용량 충족" in page.inner_text("#vod-goal"), str(len(data)))
         page.screenshot(path=os.path.join(SHOTS, "live-vod-result.png"), full_page=True)
 
         browser.close()

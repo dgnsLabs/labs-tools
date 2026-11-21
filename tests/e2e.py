@@ -137,7 +137,7 @@ def part_static():
         sw = r.read().decode()
     check("sw precaches app shell", "./index.html" in sw and "./vendor/pdf.min.js" in sw)
     check("sw precaches mp4 muxer", "./vendor/mp4-muxer.mjs" in sw)
-    check("sw cache is v1.3.1", "labs-tools-app-v1.3.1" in sw, sw[:120])
+    check("sw cache is v1.3.2", "labs-tools-app-v1.3.2" in sw, sw[:120])
 
     with urllib.request.urlopen(BASE + "/vendor/qrcode.min.js") as r:
         head = r.read(200).decode("utf-8", "ignore")
@@ -160,7 +160,7 @@ def part_ui(page):
     check("home spec strip is Korean", "도구" in home and "서버 전송" in home and "없음" in home, home[:200])
     check("home has no developer labels",
           not any(w in home for w in ("Offline Utility Suite", "TRANSFER", "INSTALL", "Index", "TOOLS")), home[:200])
-    check("home shows version 1.3.1", "v1.3.1" in home, home[-160:])
+    check("home shows version 1.3.2", "v1.3.2" in home, home[-160:])
     check("card tags are Korean", "[사진]" in home and "[영상]" in home and "[링크]" in home, home[:300])
     check("card tags keep NEW badge", "NEW" in home)
     shot(page, "01-home.png", True)
@@ -540,19 +540,20 @@ def part_watermark(page):
 
 
 # ---------------------------------------------------------------- vod
-def make_vod_sample(page, with_audio):
-    """Build a 2s 640x360 H.264 clip with the vendored ffmpeg.wasm."""
-    b64 = page.evaluate("""async (withAudio) => {
+def make_vod_sample(page, with_audio, compact=False):
+    """Build a two-second H.264 clip with the vendored ffmpeg.wasm."""
+    b64 = page.evaluate("""async ({withAudio, compact}) => {
         const FF = await Labs.util.ensureLib('ffmpeg');
         const ff = new FF.FFmpeg();
         await ff.load({
             coreURL: Labs.util.vendor('vendor/ffmpeg/ffmpeg-core.js'),
             wasmURL: Labs.util.vendor('vendor/ffmpeg/ffmpeg-core.wasm')
         });
-        const args = ['-f','lavfi','-i','testsrc=size=640x360:rate=24'];
+        const video = compact ? 'color=size=160x90:rate=24' : 'testsrc=size=640x360:rate=24';
+        const args = ['-f','lavfi','-i',video];
         if (withAudio) args.push('-f','lavfi','-i','sine=frequency=440:sample_rate=44100');
         args.push('-t','2','-c:v','libx264','-pix_fmt','yuv420p');
-        if (withAudio) args.push('-c:a','aac','-shortest');
+        if (withAudio) args.push('-c:a','aac','-b:a',compact ? '16k' : '128k','-shortest');
         args.push('-y','t.mp4');
         await ff.exec(args);
         const d = await ff.readFile('t.mp4');
@@ -562,8 +563,8 @@ def make_vod_sample(page, with_audio):
         }
         ff.terminate();
         return btoa(s);
-    }""", with_audio)
-    name = "sample.mp4" if with_audio else "sample-silent.mp4"
+    }""", {"withAudio": with_audio, "compact": compact})
+    name = "sample-compact.mp4" if compact else "sample.mp4" if with_audio else "sample-silent.mp4"
     path = os.path.join(FIX, name)
     open(path, "wb").write(base64.b64decode(b64))
     check(f"{name} generated", os.path.getsize(path) > 2000, str(os.path.getsize(path)))
@@ -653,6 +654,67 @@ def part_vod(page):
     check("fallback probe h264 baseline", "Baseline" in probe, probe[-300:])
     check("fallback probe aac audio", "aac" in probe.lower(), probe[-300:])
 
+    # The options stay collapsed and automatic until the user changes them.
+    settings = page.locator("#vod-settings")
+    mode = page.locator("#vod-size-mode")
+    target = page.locator("#vod-target-mb")
+    check("conversion settings initially collapsed", not settings.evaluate("(element) => element.open"))
+    page.locator("#vod-settings summary").click()
+    check("automatic is the default", mode.input_value() == "auto")
+    check("automatic hides manual size", not target.is_visible())
+    check("automatic result has no custom goal verdict", page.locator("#vod-goal").count() == 0)
+    mode.select_option("custom")
+    check("direct mode shows manual size", target.is_visible())
+    check("empty custom target blocks conversion", mode.is_visible() and page.locator("#vod-go").is_disabled())
+    target.fill("401")
+    check("target above upload cap blocks conversion", page.locator("#vod-go").is_disabled())
+    target.fill("1")
+    check("valid custom target allows conversion", page.locator("#vod-go").is_enabled())
+
+    # Compare actual bitrate passed to FFmpeg, independently of encoder size variance.
+    page.evaluate("""async () => {
+        const actual = await Labs.util.ensureLib('ffmpeg');
+        window.__testRealFFmpeg = actual;
+        window.FFmpegWASM = { FFmpeg: class InstrumentedFFmpeg extends actual.FFmpeg {
+            constructor() {
+                super();
+                const exec = this.exec;
+                this.exec = (...args) => {
+                    const command = args[0];
+                    if (command.at(-1) === 'output.mp4') {
+                        window.__testFfmpegBitrate = Number(command[command.indexOf('-b:v') + 1]);
+                    }
+                    return exec(...args);
+                };
+                const readFile = this.readFile;
+                this.readFile = async (...args) => {
+                    const bytes = await readFile(...args);
+                    if (!window.__testPadResult || args[0] !== 'output.mp4') return bytes;
+                    const padded = new Uint8Array(1_050_000);
+                    padded.set(bytes);
+                    const free = new DataView(padded.buffer, bytes.length, 8);
+                    free.setUint32(0, padded.length - bytes.length);
+                    free.setUint32(4, 0x66726565); // MP4 free atom
+                    return padded;
+                };
+            }
+        } };
+    }""")
+    page.click("#vod-go")
+    page.wait_for_selector("#vod-result .vod-verdict", timeout=90000)
+    bitrate = page.evaluate("() => window.__testFfmpegBitrate")
+    check("FFmpeg uses custom 1MB bitrate", bitrate == 3672000, str(bitrate))
+    check("custom goal succeeded separately from upload spec", "목표 용량 충족" in page.inner_text("#vod-goal"))
+
+    # Check the upload and custom goal verdicts independently on a known oversized result.
+    page.evaluate("() => { window.__testPadResult = true; }")
+    page.click("#vod-go")
+    page.wait_for_selector("#vod-result .vod-verdict", timeout=90000)
+    check("over-goal result still shows upload pass", "업로드 규격 통과" in page.inner_text("#vod-result .vod-verdict"))
+    check("over-goal result warns of actual size", "목표 용량 초과" in page.inner_text("#vod-goal"))
+    page.evaluate("() => { window.FFmpegWASM = window.__testRealFFmpeg; }")
+    mode.select_option("auto")
+
     # Place the MP4 metadata beyond 4 GiB without allocating a 4 GiB fixture.
     original = open(sample, "rb").read()
     offset = 0
@@ -673,6 +735,18 @@ def part_vod(page):
         page.wait_for_selector("#vod-result .vod-verdict", timeout=90000)
         check("input over 4 GiB converts", "업로드 규격 통과" in page.inner_text("#vod-result .vod-verdict"))
         check("large input uses FFmpeg", page.get_attribute("#tool-vod", "data-engine") == "ffmpeg")
+
+    # A very compact audio track beats the fixed output audio budget by itself.
+    compact = make_vod_sample(page, True, compact=True)
+    page.set_input_files("#vod-file", compact)
+    if not settings.evaluate("(element) => element.open"):
+        page.locator("#vod-settings summary").click()
+    mode.select_option("original")
+    page.click("#vod-go")
+    page.wait_for_selector("#vod-note", state="visible", timeout=90000)
+    check("unattainable audio budget explains the failure", "목표 용량이 너무 작아요" in page.inner_text("#vod-note"))
+    check("unattainable goal has no result file", page.locator("#vod-save").count() == 0)
+    mode.select_option("auto")
 
     page.evaluate("() => { window.AudioEncoder = window.__testAudioEncoder; delete window.__testAudioEncoder; }")
 
@@ -704,6 +778,27 @@ def part_vod(page):
     check("webcodecs probe h264 baseline", "Baseline" in wprobe, wprobe[-300:])
     check("webcodecs probe duration ~2s", "Duration: 00:00:01" in wprobe or "Duration: 00:00:02" in wprobe, wprobe[-300:])
     check("webcodecs probe has 60 frames", "60 fps" in wprobe or "30 fps" in wprobe or "frames" in wprobe.lower(), wprobe[-400:])
+
+    # Compare the acceleration path's configured bitrate against the exact source size.
+    if not settings.evaluate("(element) => element.open"):
+        page.locator("#vod-settings summary").click()
+    mode.select_option("original")
+    check("original mode hides manual size", not target.is_visible())
+    page.evaluate("""() => {
+        const configure = VideoEncoder.prototype.configure;
+        VideoEncoder.prototype.configure = function(config) {
+            window.__testWebCodecsBitrate = config.bitrate;
+            return configure.call(this, config);
+        };
+    }""")
+    page.click("#vod-go")
+    page.wait_for_selector("#vod-result .vod-verdict", timeout=90000)
+    custom_engine = page.get_attribute("#tool-vod", "data-engine")
+    check("original size can use WebCodecs", custom_engine == "webcodecs", str(custom_engine))
+    budget = page.evaluate("() => window.__testWebCodecsBitrate")
+    expected_budget = int(os.path.getsize(silent) * 8 * 0.95 / 2 // 1000) * 1000
+    check("WebCodecs uses exact source bytes for original-size goal", budget == expected_budget, str(budget))
+    check("original mode shows an actual goal verdict", "목표 용량" in page.inner_text("#vod-goal"))
 
     # 5) 소리 있는 영상의 WebCodecs 경로 배선 확인
     #    이 리눅스 Chromium에는 AAC 인코더가 없어 실제 AAC는 만들 수 없다.
