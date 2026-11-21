@@ -45,7 +45,7 @@
 index.html            앱 셸 (해시 라우팅: #/tool/<id>)
 manifest.json         PWA 매니페스트 (name: Labs Tools, display: standalone)
 sw.js                 Service Worker (앱 셸 precache + ffmpeg core 런타임 캐시)
-css/style.css         다크/라이트 테마, 모바일 카드 UI
+css/style.css         Geist 흑백 헤어라인 그리드 + 시그널 오렌지(#ff5a1f) 디자인 시스템
 js/app.js             홈 화면 · 라우터 · 테마 · SW 등록
 js/lib/common.js      공통 유틸 (스크립트/라이브러리 지연 로드, 저장·공유, ZIP 등)
 js/tools/*.js         도구 8종 (각 도구는 진입할 때만 로드)
@@ -56,6 +56,18 @@ tools/make-icons.py   아이콘 재생성 스크립트
 tests/e2e.py          Playwright 로컬 검증 (HTTP 200 · 콘솔 에러 0 · 도구 동작)
 tests/make-fixtures.py 테스트용 이미지/PDF 생성
 ```
+
+## 디자인
+
+홈은 서버리스 유틸리티답게 **1px 헤어라인 2열(넓은 화면 4열) 그리드**로만 구성합니다.
+카드 안에 파스텔 타일이나 라운드 배지를 두지 않고, 25px 듀오톤 아이콘과 모노스페이스 태그
+(`[IMG]` `[NET]` `[DOC]` `[GEN]` `[VID]`) · 번호(`01`~`08`)로 구분합니다.
+
+- 바탕: 다크 `#000000` / 라이트 `#ffffff`, 보더 `#222222` / `#e5e5e5`
+- 포인트 컬러는 **시그널 오렌지 `#ff5a1f` 하나** — 상단 LED, 태그, `NEW`, primary 버튼,
+  활성 탭 밑줄, 진행률 바, 포커스 링에만 사용
+- 안쪽 도구 화면도 둥근 아일랜드를 걷어내고 2~4px 라운딩 + 1px 보더 + 플랫 표면으로 통일
+- 모든 기능(DOM id/class, `#/tool/<id>` 라우팅, 테마 토글, 테스트 셀렉터)은 그대로 유지
 
 ## 로컬 실행
 

@@ -32,7 +32,7 @@
       '<div class="field"><label>암호</label>' +
       '<input type="text" id="qr-pass" placeholder="비밀번호" autocomplete="off" spellcheck="false"></div>' +
       '<div class="row nowrap">' +
-      '<div class="field grow" style="margin:0"><label>암호화</label>' +
+      '<div class="field grow" style="margin:0;flex:1.5"><label>암호화</label>' +
       '<select id="qr-sec"><option value="WPA">WPA / WPA2 / WPA3</option><option value="WEP">WEP</option><option value="nopass">없음 (개방)</option></select></div>' +
       '<div class="field grow" style="margin:0"><label>숨김 SSID</label>' +
       '<select id="qr-hidden"><option value="0">아니오</option><option value="1">예</option></select></div>' +
