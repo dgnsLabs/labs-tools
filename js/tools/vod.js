@@ -9,7 +9,7 @@
   var U = window.Labs.util;
   var $ = U.$;
 
-  var TARGET_MB = 400;      // 업로드 최대 용량
+  var TARGET_BYTES = 400 * 1000 * 1000; // 변환 결과의 최대 용량
   var LARGE_MB = 150;       // 폰에서 오래 걸리기 시작하는 용량
   var MAX_ACCEL_BYTES = 120 * 1024 * 1024; // 이보다 크면 가속 경로 대신 기본 방식
   var MAX_ACCEL_SECONDS = 600;             // 이보다 길면 소리를 통째로 풀지 않는다
@@ -27,11 +27,8 @@
 
   // 용량이 큰 파일에 대한 안내 (터미널 명령 대신 사람의 말로)
   function largeNotice(size) {
-    if (size > TARGET_MB * 1024 * 1024) {
-      return '400MB가 넘는 영상이에요. 변환은 가능하지만 실패할 수 있으니, 짧게 나눠서 올려 주세요.';
-    }
     if (size > LARGE_MB * 1024 * 1024) {
-      return '용량이 커서 폰에서는 오래 걸릴 수 있어요. PC 브라우저에서 같은 주소를 열어 변환하시면 훨씬 빠릅니다.';
+      return '원본 용량이 커서 휴대폰에서는 변환이 오래 걸릴 수 있어요. 400MB 제한은 변환한 파일에 적용돼요. PC 브라우저에서 같은 주소를 열어 변환할 수도 있어요.';
     }
     return '';
   }
@@ -296,7 +293,7 @@
       });
       enc.configure({
         codec: AVC_CODEC, width: OUT_W, height: OUT_H,
-        bitrate: OUT_BITRATE, framerate: OUT_FPS,
+        bitrate: videoBitrate(duration), framerate: OUT_FPS,
         avc: { format: 'avc' }, latencyMode: 'quality'
       });
 
@@ -361,7 +358,14 @@
 
   /* ---------------- ffmpeg.wasm 경로 (폴백) ---------------- */
 
-  function ffmpegArgs(inputName) {
+  function videoBitrate(duration) {
+    if (!isFinite(duration) || duration <= 0) return OUT_BITRATE;
+    // MP4 오버헤드와 인코더의 비트레이트 편차를 위해 5%를 남긴다.
+    var budget = TARGET_BYTES * 8 * 0.95 / duration - AUDIO_BITS;
+    return Math.min(OUT_BITRATE, Math.max(1000, Math.floor(budget / 1000) * 1000));
+  }
+
+  function ffmpegArgs(inputName, bitrate) {
     return [
       '-i', inputName,
       '-vf', VF,
@@ -370,7 +374,7 @@
       '-profile:v', 'baseline',
       '-level:v', '3.1',
       '-pix_fmt', 'yuv420p',
-      '-b:v', '5000k', '-maxrate', '5000k', '-bufsize', '10000k',
+      '-b:v', String(bitrate), '-maxrate', String(bitrate), '-bufsize', String(bitrate * 2),
       '-c:a', 'aac', '-b:a', '128k', '-ar', '44100', '-ac', '2',
       '-movflags', '+faststart',
       '-threads', '1',
@@ -379,13 +383,15 @@
   }
 
   async function transcodeFFmpeg(file, hooks, state) {
+    hooks.stage('변환 도구 준비 중… (처음 한 번만)', 0.03);
+    state.failureHint = '변환 도구를 불러오지 못했어요. 인터넷 연결을 확인하고 다시 시도해 주세요.';
     var FFmpegWASM = await U.ensureLib('ffmpeg');
+    if (!hooks.alive()) throw new Error('aborted');
     var ff = new FFmpegWASM.FFmpeg();
     state.ffmpeg = ff;
     ff.on('progress', function (e) {
       if (e && isFinite(e.progress)) hooks.stage('영상 변환 중…', 0.1 + 0.85 * U.clamp(e.progress, 0, 1));
     });
-    hooks.stage('변환 도구 준비 중… (처음 한 번만)', 0.03);
     await ff.load({
       coreURL: U.vendor('vendor/ffmpeg/ffmpeg-core.js'),
       wasmURL: U.vendor('vendor/ffmpeg/ffmpeg-core.wasm')
@@ -394,18 +400,23 @@
 
     var ext = (/\.[a-z0-9]+$/i.exec(file.name || '') || ['.mp4'])[0].toLowerCase();
     var inName = 'input' + ext;
-    hooks.stage('영상 올리는 중…', 0.06);
-    await ff.writeFile(inName, new Uint8Array(await U.readFile(file)));
+    hooks.stage('원본 영상 읽는 중…', 0.06);
+    state.failureHint = '원본 영상에 접근하지 못했어요. 파일을 다시 선택해 주세요.';
+    await ff.createDir('/source');
+    if (!await ff.mount('WORKERFS', { blobs: [{ name: inName, data: file }] }, '/source')) {
+      throw new Error('WORKERFS mount unavailable');
+    }
     if (!hooks.alive()) throw new Error('aborted');
 
     hooks.stage('영상 변환 중…', 0.1);
-    var code = await ff.exec(ffmpegArgs(inName));
+    state.failureHint = '영상 변환을 마치지 못했어요. 파일이 재생되는지 확인하거나 PC 브라우저에서 다시 시도해 주세요.';
+    var code = await ff.exec(ffmpegArgs('/source/' + inName, videoBitrate(state.meta && state.meta.duration)));
     if (!hooks.alive()) throw new Error('aborted');
     if (code !== 0) throw new Error('영상 형식을 읽지 못했습니다 (code ' + code + ')');
 
     hooks.stage('마무리 중…', 0.97);
+    state.failureHint = '변환한 파일을 꺼내지 못했어요. 다른 탭을 닫고 다시 시도해 주세요.';
     var data = await ff.readFile('output.mp4');
-    try { await ff.deleteFile(inName); await ff.deleteFile('output.mp4'); } catch (e) { /* ignore */ }
     return new Blob([data], { type: 'video/mp4' });
   }
 
@@ -482,7 +493,9 @@
     $('#vod-change', root).addEventListener('click', function () { input.click(); });
 
     function select(file) {
+      if (state.running) return;
       state.file = file;
+      state.meta = null;
       resultEl.innerHTML = '';
       runner.hidden = false;
       goBtn.disabled = false;
@@ -502,13 +515,14 @@
         v.preload = 'metadata';
         var url = URL.createObjectURL(file);
         v.onloadedmetadata = function () {
+          URL.revokeObjectURL(url);
+          if (state.file !== file) return;
           state.meta = { duration: v.duration || 0, w: v.videoWidth, h: v.videoHeight };
           var dur = state.meta.duration;
           var mm = Math.floor(dur / 60);
           var ss = Math.round(dur % 60);
           infoEl.textContent = (file.name || '영상') + ' · ' + U.bytes(file.size) +
             ' · ' + mm + ':' + String(ss).padStart(2, '0');
-          URL.revokeObjectURL(url);
         };
         v.onerror = function () { URL.revokeObjectURL(url); };
         v.src = url;
@@ -538,7 +552,7 @@
     function showResult(blob) {
       var url = URL.createObjectURL(blob);
       var name = (U.baseName(state.file.name) || 'video') + '-vod.mp4';
-      var over = blob.size > TARGET_MB * 1024 * 1024;
+      var over = blob.size > TARGET_BYTES;
 
       resultEl.innerHTML =
         '<div class="panel">' +
@@ -576,6 +590,7 @@
       if (!state.file || state.running) return;
       state.running = true;
       state.alive = true;
+      state.failureHint = '';
       resultEl.innerHTML = '';
       goBtn.disabled = true;
       stopBtn.disabled = false;
@@ -614,8 +629,6 @@
           blob = await transcodeFFmpeg(state.file, hooks, state);
         }
 
-        state.running = false;
-        state.alive = false;
         root.dataset.engine = engine;
         window.__labsVod = { path: engine, reason: reason, ms: Date.now() - started, size: blob.size };
 
@@ -628,7 +641,7 @@
         goBtn.textContent = '다시 변환';
         U.toast('변환했어요 · ' + U.bytes(blob.size), null, 3000);
       } catch (e) {
-        if (e && e.message === 'aborted') {
+        if (!state.alive || (e && e.message === 'aborted')) {
           stateEl.textContent = '중단됨';
           labelEl.textContent = '중단했습니다. 다시 시작하려면 “변환 시작”을 눌러 주세요.';
         } else {
@@ -636,7 +649,7 @@
           stateEl.textContent = '실패';
           labelEl.textContent = '변환하지 못했어요.';
           noteEl.hidden = false;
-          noteEl.textContent = '영상이 너무 길거나 용량이 크면 실패할 수 있어요. 짧게 나눠서 다시 시도해 주세요.';
+          noteEl.textContent = state.failureHint || '영상을 읽지 못했어요. 파일이 재생되는지 확인한 뒤 다시 시도해 주세요.';
           U.toast('변환하지 못했어요', 'err', 3800);
         }
       } finally {

@@ -17,6 +17,8 @@ import os
 import re
 import socket
 import subprocess
+import struct
+import tempfile
 import sys
 import time
 import urllib.request
@@ -135,7 +137,7 @@ def part_static():
         sw = r.read().decode()
     check("sw precaches app shell", "./index.html" in sw and "./vendor/pdf.min.js" in sw)
     check("sw precaches mp4 muxer", "./vendor/mp4-muxer.mjs" in sw)
-    check("sw cache is v1.3.0", "labs-tools-app-v1.3.0" in sw, sw[:120])
+    check("sw cache is v1.3.1", "labs-tools-app-v1.3.1" in sw, sw[:120])
 
     with urllib.request.urlopen(BASE + "/vendor/qrcode.min.js") as r:
         head = r.read(200).decode("utf-8", "ignore")
@@ -158,7 +160,7 @@ def part_ui(page):
     check("home spec strip is Korean", "도구" in home and "서버 전송" in home and "없음" in home, home[:200])
     check("home has no developer labels",
           not any(w in home for w in ("Offline Utility Suite", "TRANSFER", "INSTALL", "Index", "TOOLS")), home[:200])
-    check("home shows version 1.3.0", "v1.3.0" in home, home[-160:])
+    check("home shows version 1.3.1", "v1.3.1" in home, home[-160:])
     check("card tags are Korean", "[사진]" in home and "[영상]" in home and "[링크]" in home, home[:300])
     check("card tags keep NEW badge", "NEW" in home)
     shot(page, "01-home.png", True)
@@ -610,10 +612,11 @@ def part_vod(page):
     check("large notice suggests pc browser", "PC 브라우저에서 같은 주소를 열어" in notice, notice)
     check("large notice names no command", "ffmpeg" not in notice.lower() and "-i" not in notice, notice)
     huge = page.evaluate("() => Labs.tools.vod.largeNotice(420 * 1024 * 1024)")
-    check("over 400MB notice", "400MB가 넘는" in huge, huge)
+    check("400MB applies to output", "400MB 제한은 변환한 파일에 적용" in huge, huge)
 
-    # 3) 소리가 있는 영상 → 이 브라우저는 AAC 인코더가 없어 ffmpeg 경로로 폴백
+    # Force the fallback regardless of the test browser's native AAC support.
     sample = make_vod_sample(page, True)
+    page.evaluate("() => { window.__testAudioEncoder = window.AudioEncoder; window.AudioEncoder = undefined; }")
     page.set_input_files("#vod-file", sample)
     page.wait_for_timeout(800)
     check("file info shown", "sample.mp4" in page.inner_text("#vod-info"), page.inner_text("#vod-info"))
@@ -649,6 +652,29 @@ def part_vod(page):
     check("fallback probe 1280x720", "1280x720" in probe, probe[-300:])
     check("fallback probe h264 baseline", "Baseline" in probe, probe[-300:])
     check("fallback probe aac audio", "aac" in probe.lower(), probe[-300:])
+
+    # Place the MP4 metadata beyond 4 GiB without allocating a 4 GiB fixture.
+    original = open(sample, "rb").read()
+    offset = 0
+    while original[offset + 4:offset + 8] != b"moov":
+        atom_size = int.from_bytes(original[offset:offset + 4], "big")
+        assert atom_size >= 8
+        offset += atom_size
+    free_size = 4 * 1024**3
+    with tempfile.TemporaryDirectory() as directory:
+        large = os.path.join(directory, "large.mp4")
+        with open(large, "wb") as f:
+            f.write(original[:offset])
+            f.write(struct.pack(">I4sQ", 1, b"free", free_size))
+            f.seek(offset + free_size)
+            f.write(original[offset:])
+        page.set_input_files("#vod-file", large)
+        page.click("#vod-go")
+        page.wait_for_selector("#vod-result .vod-verdict", timeout=90000)
+        check("input over 4 GiB converts", "업로드 규격 통과" in page.inner_text("#vod-result .vod-verdict"))
+        check("large input uses FFmpeg", page.get_attribute("#tool-vod", "data-engine") == "ffmpeg")
+
+    page.evaluate("() => { window.AudioEncoder = window.__testAudioEncoder; delete window.__testAudioEncoder; }")
 
     # 4) 소리가 없는 영상 → WebCodecs 가속 경로가 끝까지 수행된다
     silent = make_vod_sample(page, False)
