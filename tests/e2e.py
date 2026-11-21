@@ -137,7 +137,7 @@ def part_static():
         sw = r.read().decode()
     check("sw precaches app shell", "./index.html" in sw and "./vendor/pdf.min.js" in sw)
     check("sw precaches mp4 muxer", "./vendor/mp4-muxer.mjs" in sw)
-    check("sw cache is v1.3.3", "labs-tools-app-v1.3.3" in sw, sw[:120])
+    check("sw cache is v1.3.4", "labs-tools-app-v1.3.4" in sw, sw[:120])
 
     with urllib.request.urlopen(BASE + "/vendor/qrcode.min.js") as r:
         head = r.read(200).decode("utf-8", "ignore")
@@ -160,7 +160,7 @@ def part_ui(page):
     check("home spec strip is Korean", "도구" in home and "서버 전송" in home and "없음" in home, home[:200])
     check("home has no developer labels",
           not any(w in home for w in ("Offline Utility Suite", "TRANSFER", "INSTALL", "Index", "TOOLS")), home[:200])
-    check("home shows version 1.3.3", "v1.3.3" in home, home[-160:])
+    check("home shows version 1.3.4", "v1.3.4" in home, home[-160:])
     check("card tags are Korean", "[사진]" in home and "[영상]" in home and "[링크]" in home, home[:300])
     check("card tags keep NEW badge", "NEW" in home)
     shot(page, "01-home.png", True)
@@ -872,6 +872,31 @@ def part_vod(page):
     check("audio path mp4 has aac track", b"mp4a" in adata, adata[:16])
     check("audio path mp4 has h264 track", b"avc1" in adata)
     p2.close()
+
+    # The known conforming MP4 already created by the FFmpeg path can be saved unchanged.
+    mode.select_option("auto")
+    page.set_input_files("#vod-file", path)
+    page.click("#vod-go")
+    page.wait_for_selector("#vod-result .vod-verdict", timeout=90000)
+    check("conforming MP4 skips encoding", page.get_attribute("#tool-vod", "data-engine") == "original",
+          str(page.evaluate("window.__labsVod")))
+    check("original result explains that conversion was skipped", "변환 없이 저장" in page.inner_text("#vod-save"))
+    with page.expect_download() as original_download:
+        page.click("#vod-save")
+    original_path = os.path.join(SHOTS, "vod-original.mp4")
+    original_download.value.save_as(original_path)
+    check("original download keeps all bytes and its filename",
+          open(original_path, "rb").read() == data and original_download.value.suggested_filename == "vod.mp4")
+
+    # Its original size must not bypass a lower explicit target.
+    if not settings.evaluate("(element) => element.open"):
+        page.locator("#vod-settings summary").click()
+    mode.select_option("custom")
+    target.fill("1")
+    page.click("#vod-go")
+    page.wait_for_selector("#vod-result .vod-verdict", timeout=90000)
+    check("smaller target still requires conversion",
+          len(data) > 1_000_000 and page.get_attribute("#tool-vod", "data-engine") in ("webcodecs", "ffmpeg"))
 
 
 # ---------------------------------------------------------------- offline

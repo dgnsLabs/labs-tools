@@ -35,6 +35,7 @@
 - 변환 설정을 열어 원본 크기를 목표로 또는 목표 용량 직접 입력을 선택할 수 있습니다. 기본값은 자동입니다.
   목표는 변환 전에 표시되며, 결과 화면에는 원본 대비 용량 차이와 규격 및 목표 달성 여부가 표시됩니다.
 - 출력 규격: `MP4 / H.264 Baseline / 1280×720 / 5000 kbps 이하 / AAC 44.1kHz / 400 MB 이하`
+- 720p MP4 원본의 영상·오디오 규격과 용량 목표가 확인되면 변환 없이 원본을 저장할 수 있습니다.
 - **1순위 — WebCodecs 가속(`js/tools/vod.js`)**
   `VideoEncoder`(`avc1.42001f`, 1280×720) + `vendor/mp4-muxer.mjs`(mp4-muxer 5.2.2, ESM 로컬 번들)로
   영상을 다시 인코딩하고, 소리는 `decodeAudioData`로 PCM을 얻어 `AudioEncoder`(`mp4a.40.2`)로 AAC를 만듭니다.

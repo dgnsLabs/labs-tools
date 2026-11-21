@@ -376,9 +376,10 @@
     return Math.min(OUT_BITRATE, Math.max(1000, Math.floor(budget / 1000) * 1000));
   }
 
-  async function probeInput(ff, inputPath) {
+  async function probeInput(ff, inputPath, inspectLine) {
     var info = { duration: 0, hasAudio: false };
     function readInputInfo(event) {
+      if (inspectLine) inspectLine(event.message);
       var match = /^\s*Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/.exec(event.message);
       if (match) info.duration = Number(match[1]) * 3600 + Number(match[2]) * 60 + Number(match[3]);
       if (/^\s*Stream #0:\d+.*:\s*Audio:/.test(event.message)) info.hasAudio = true;
@@ -410,7 +411,7 @@
     ];
   }
 
-  async function transcodeFFmpeg(file, hooks, state, targetBytes) {
+  async function openFFmpegInput(file, hooks, state) {
     hooks.stage('변환 도구 준비 중…');
     state.failureHint = '변환 도구를 불러오지 못했어요. 인터넷 연결을 확인하고 다시 시도해 주세요.';
     var FFmpegWASM = await U.ensureLib('ffmpeg');
@@ -433,7 +434,59 @@
     }
     if (!hooks.alive()) throw new Error('aborted');
 
-    var inputPath = '/source/' + inName;
+    return '/source/' + inName;
+  }
+
+  async function checkOriginal(file, targetBytes, hooks, state) {
+    if (!/\.mp4$/i.test(file.name) || file.size > (targetBytes ?? TARGET_BYTES)) return false;
+    await state.metadataReady;
+    if (!hooks.alive()) throw new Error('aborted');
+    if (!state.meta || state.meta.w !== OUT_W || state.meta.h !== OUT_H) return false;
+
+    var streams = [];
+    var brand = '';
+    var bitrate = Infinity;
+    var transformed = false;
+    try {
+      var path = await openFFmpegInput(file, hooks, state);
+      hooks.stage('원본 업로드 규격 확인 중…');
+      await probeInput(state.ffmpeg, path, function (line) {
+        var match = /^\s*major_brand\s*:\s*(\S+)/.exec(line);
+        if (match) brand = match[1];
+        match = /^\s*Duration:.*bitrate:\s*(\d+) kb\/s/.exec(line);
+        if (match) bitrate = Number(match[1]);
+        if (/^\s*Stream #0:\d+/.test(line)) streams.push(line);
+        if (/displaymatrix|^\s*rotate\s*:/i.test(line)) transformed = true;
+      });
+      if (!hooks.alive()) throw new Error('aborted');
+    } catch (error) {
+      if (!hooks.alive()) throw error;
+      return false;
+    } finally {
+      closeFFmpeg(state);
+    }
+    // Use the total bitrate as a conservative upper bound on the video stream.
+    if (transformed || bitrate >= OUT_BITRATE / 1000 ||
+        !/^(isom|iso[2-9]|mp4[12]|avc1|M4V)$/.test(brand)) return false;
+    var video = streams.filter(function (line) { return /:\s*Video:/.test(line); });
+    var audio = streams.filter(function (line) { return /:\s*Audio:/.test(line); });
+    return video.length === 1 && audio.length <= 1 &&
+      streams.length === video.length + audio.length &&
+      /Video: h264 \((?:Constrained )?Baseline\).*\(avc1 \/.*yuv420p[^,]*, 1280x720\b/.test(video[0]) &&
+      !/\(attached pic\)/.test(video[0]) &&
+      (!/\bSAR\b/.test(video[0]) || /\bSAR 1:1\b/.test(video[0])) &&
+      audio.every(function (line) { return /Audio: aac \(LC\).*\(mp4a \/.*44100 Hz, (?:mono|stereo),/.test(line); });
+  }
+
+  function closeFFmpeg(state) {
+    if (!state.ffmpeg) return;
+    state.ffmpeg.terminate();
+    state.ffmpeg = null;
+  }
+
+  async function transcodeFFmpeg(file, hooks, state, targetBytes) {
+    var inputPath = await openFFmpegInput(file, hooks, state);
+    var ff = state.ffmpeg;
     var duration = state.meta && state.meta.duration;
     var hasAudio = true;
     if (targetBytes != null) {
@@ -632,14 +685,24 @@
       infoEl.textContent = U.bytes(file.size);
       renderNotice(file);
 
-      try {
+      state.metadataReady = new Promise(function (resolve) {
         var v = document.createElement('video');
         v.preload = 'metadata';
         var url = URL.createObjectURL(file);
-        v.onloadedmetadata = function () {
+        function finish() {
+          clearTimeout(timeout);
+          v.onloadedmetadata = v.onerror = null;
+          v.removeAttribute('src');
+          v.load();
           URL.revokeObjectURL(url);
+          resolve();
+        }
+        var timeout = setTimeout(finish, 1800);
+        v.onloadedmetadata = function () {
+          var metadata = { duration: v.duration || 0, w: v.videoWidth, h: v.videoHeight };
+          finish();
           if (state.file !== file) return;
-          state.meta = { duration: v.duration || 0, w: v.videoWidth, h: v.videoHeight };
+          state.meta = metadata;
           refreshSettings();
           var dur = state.meta.duration;
           if (!Number.isFinite(dur) || dur <= 0) return;
@@ -647,9 +710,9 @@
           infoEl.textContent = U.bytes(file.size) + ' · ' +
             Math.floor(seconds / 60) + ':' + String(seconds % 60).padStart(2, '0');
         };
-        v.onerror = function () { URL.revokeObjectURL(url); };
+        v.onerror = finish;
         v.src = url;
-      } catch (e) { /* 안내용 정보라 없어도 된다 */ }
+      });
     }
 
     // 용량이 크면 터미널 명령 대신 사람의 말로 안내한다.
@@ -676,9 +739,9 @@
       return (bytes / 1000000).toLocaleString('ko-KR', { maximumFractionDigits: 2 }) + ' MB';
     }
 
-    function showResult(blob, targetBytes, formatSize) {
+    function showResult(blob, targetBytes, formatSize, original) {
       state.resultURL = URL.createObjectURL(blob);
-      var name = (U.baseName(state.file.name) || 'video') + '-vod.mp4';
+      var name = original ? state.file.name : (U.baseName(state.file.name) || 'video') + '-vod.mp4';
       var over = blob.size > TARGET_BYTES;
       var missedGoal = targetBytes != null && blob.size > targetBytes;
       var delta = blob.size - state.file.size;
@@ -687,7 +750,7 @@
 
       resultEl.innerHTML =
         '<div class="panel">' +
-        '<div class="panel-head"><h2 id="vod-result-title" tabindex="-1">변환 결과</h2></div>' +
+        '<div class="panel-head"><h2 id="vod-result-title" tabindex="-1">' + (original ? '원본 저장 가능' : '변환 결과') + '</h2></div>' +
         '<p class="vod-size-comparison" id="vod-size-comparison">원본 ' + formatSize(state.file.size) +
         ' → 결과 <strong>' + formatSize(blob.size) + '</strong> · ' + difference + '</p>' +
         '<p class="vod-verdict' + (over ? ' bad' : '') + '">' +
@@ -702,7 +765,7 @@
           (missedGoal ? '목표 용량 초과' : '목표 용량 충족') +
           ' · 목표 ' + formatSize(targetBytes) + (missedGoal ? '보다 ' + formatSize(blob.size - targetBytes) + ' 큼' : '') + '</p>') +
         '<div class="row vod-result-actions">' +
-        '<button class="btn primary grow" type="button" id="vod-save">MP4 저장</button>' +
+        '<button class="btn primary grow" type="button" id="vod-save">' + (original ? '변환 없이 저장' : 'MP4 저장') + '</button>' +
         '<button class="btn" type="button" id="vod-share">공유</button>' +
         '<button class="btn ghost" type="button" id="vod-adjust">설정 조정</button></div>' +
         '<video src="' + state.resultURL + '" controls playsinline preload="metadata" aria-label="변환한 영상 미리보기" class="vod-preview"></video>' +
@@ -762,10 +825,11 @@
       var engine = 'ffmpeg';
       var reason = '';
       try {
-        // 1) 기기 가속(WebCodecs) 먼저 시도
-        var plan = await checkWebCodecs(state.file, hooks);
-        var blob = null;
-        if (plan.ok) {
+        var original = await checkOriginal(state.file, targetBytes, hooks, state);
+        var blob = original ? state.file : null;
+        if (original) engine = 'original';
+        var plan = original ? null : await checkWebCodecs(state.file, hooks);
+        if (plan && plan.ok) {
           try {
             blob = await transcodeWebCodecs(state.file, plan, hooks, targetBytes);
             engine = 'webcodecs';
@@ -775,7 +839,7 @@
             reason = (e && e.message) || String(e);
             console.warn('[vod] 가속 변환 실패 → 기본 방식으로', e);
           }
-        } else {
+        } else if (plan) {
           reason = plan.reason || '미지원';
         }
 
@@ -791,11 +855,11 @@
 
         var secs = Math.max(1, Math.round((Date.now() - started) / 1000));
         stateEl.textContent = '완료';
-        stage('변환 완료 · ' + secs + '초');
+        stage(original ? '원본이 업로드 규격에 맞아요.' : '변환 완료 · ' + secs + '초');
         elapsedEl.textContent = '';
         fallbackEl.hidden = true;
-        showResult(blob, targetBytes, formatSize);
-        goBtn.textContent = '다시 변환';
+        showResult(blob, targetBytes, formatSize, original);
+        goBtn.textContent = original ? '다시 확인' : '다시 변환';
         goBtn.classList.remove('primary');
       } catch (e) {
         if (!state.alive || (e && e.message === 'aborted')) {
@@ -821,10 +885,7 @@
         refreshSettings();
         if (document.activeElement === stopBtn) goBtn.focus();
         stopBtn.hidden = true;
-        if (state.ffmpeg) {
-          try { state.ffmpeg.terminate(); } catch (e) { /* ignore */ }
-          state.ffmpeg = null;
-        }
+        closeFFmpeg(state);
       }
     }
 
@@ -835,10 +896,7 @@
       state.alive = false;
       stopBtn.disabled = true;
       stage('변환 중단 중…');
-      if (state.ffmpeg) {
-        try { state.ffmpeg.terminate(); } catch (e) { /* ignore */ }
-        state.ffmpeg = null;
-      }
+      closeFFmpeg(state);
     });
   }
 
