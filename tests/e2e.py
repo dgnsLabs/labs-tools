@@ -679,6 +679,64 @@ def part_vod(page):
     check("webcodecs probe duration ~2s", "Duration: 00:00:01" in wprobe or "Duration: 00:00:02" in wprobe, wprobe[-300:])
     check("webcodecs probe has 60 frames", "60 fps" in wprobe or "30 fps" in wprobe or "frames" in wprobe.lower(), wprobe[-400:])
 
+    # 5) 소리 있는 영상의 WebCodecs 경로 배선 확인
+    #    이 리눅스 Chromium에는 AAC 인코더가 없어 실제 AAC는 만들 수 없다.
+    #    AudioEncoder만 대체해 AudioData 전달·mux 배선을 검사한다 (콘솔은 따로 분리).
+    p2 = page.context.new_page()
+    p2.set_default_timeout(90000)
+    p2.goto(BASE + "/#/tool/vod")
+    p2.wait_for_selector("#vod-drop")
+    p2.evaluate("""() => {
+        window.__stubAac = { chunks: 0, frames: 0, first: null };
+        class FakeAac {
+            static async isConfigSupported(c) { return { supported: c.codec === 'mp4a.40.2', config: c }; }
+            constructor(init) { this.out = init.output; this.err = init.error; }
+            configure(cfg) { this.cfg = cfg; }
+            encode(audioData) {
+                const frames = audioData.numberOfFrames;
+                const left = new Float32Array(frames), right = new Float32Array(frames);
+                audioData.copyTo(left, { planeIndex: 0, format: 'f32-planar' });
+                audioData.copyTo(right, { planeIndex: 1, format: 'f32-planar' });
+                if (!window.__stubAac.first) {
+                    let peak = 0;
+                    for (let i = 0; i < left.length; i++) peak = Math.max(peak, Math.abs(left[i]));
+                    window.__stubAac.first = [peak, left[100]];
+                }
+                window.__stubAac.frames += frames;
+                const chunk = new EncodedAudioChunk({
+                    type: 'key', timestamp: audioData.timestamp,
+                    duration: Math.round(frames / 44100 * 1e6),
+                    data: new Uint8Array(frames)
+                });
+                this.out(chunk, { decoderConfig: { codec: 'mp4a.40.2', sampleRate: 44100, numberOfChannels: 2, description: new Uint8Array([0x12, 0x10]) } });
+                window.__stubAac.chunks++;
+            }
+            flush() { return Promise.resolve(); }
+            close() {}
+        }
+        window.AudioEncoder = FakeAac;
+    }""")
+    p2.set_input_files("#vod-file", sample)
+    p2.wait_for_timeout(600)
+    p2.click("#vod-go")
+    p2.wait_for_selector("#vod-result .vod-verdict", timeout=180000)
+    stub = p2.evaluate("() => window.__stubAac")
+    engine3 = p2.get_attribute("#tool-vod", "data-engine")
+    info3 = p2.evaluate("() => window.__labsVod || null")
+    print("  engine:", engine3, info3, "stub:", {k: stub[k] for k in ("chunks", "frames")})
+    check("audio path uses WebCodecs", engine3 == "webcodecs", str(info3))
+    check("audio encoder received whole clip", stub and stub["frames"] >= 44100 * 1.9, str(stub and stub["frames"]))
+    check("audio planes are real samples",
+          bool(stub and stub["first"] and stub["first"][0] > 0.01), str(stub and stub["first"]))
+    with p2.expect_download() as dl:
+        p2.click("#vod-save")
+    apath = os.path.join(SHOTS, "vod-webcodecs-audio.mp4")
+    dl.value.save_as(apath)
+    adata = open(apath, "rb").read()
+    check("audio path mp4 has aac track", b"mp4a" in adata, adata[:16])
+    check("audio path mp4 has h264 track", b"avc1" in adata)
+    p2.close()
+
 
 # ---------------------------------------------------------------- offline
 def part_offline(page, context):

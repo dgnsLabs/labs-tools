@@ -11,6 +11,8 @@
 
   var TARGET_MB = 400;      // 업로드 최대 용량
   var LARGE_MB = 150;       // 폰에서 오래 걸리기 시작하는 용량
+  var MAX_ACCEL_BYTES = 120 * 1024 * 1024; // 이보다 크면 가속 경로 대신 기본 방식
+  var MAX_ACCEL_SECONDS = 600;             // 이보다 길면 소리를 통째로 풀지 않는다
   var OUT_W = 1280;
   var OUT_H = 720;
   var OUT_FPS = 30;
@@ -180,10 +182,11 @@
   }
 
   // WebCodecs 로 변환할 수 있는지 먼저 확인한다 (무거운 작업 전에).
-  async function checkWebCodecs(file, hooks) {
+  async function checkWebCodecs(file) {
     if (!window.isSecureContext) return { ok: false, reason: '보안 연결 아님' };
     if (typeof window.VideoEncoder !== 'function') return { ok: false, reason: '브라우저 미지원' };
     if (!/\.(mp4|m4v|mov)$/i.test(file.name || '')) return { ok: false, reason: '다른 형식' };
+    if (file.size > MAX_ACCEL_BYTES) return { ok: false, reason: '용량 큼' };
 
     var cfg = {
       codec: AVC_CODEC, width: OUT_W, height: OUT_H,
@@ -193,27 +196,17 @@
     var support = await window.VideoEncoder.isConfigSupported(cfg).catch(function () { return null; });
     if (!support || !support.supported) return { ok: false, reason: '영상 코덱 미지원' };
 
-    var hasAudio = await detectAudio(file);
-    if (hasAudio === false) return { ok: true, audio: null };
-
-    // 소리가 있으면(또는 확인 불가) AAC로 다시 담을 수 있어야 한다.
-    var bytes = new Uint8Array(await U.readFile(file));
-    var decoded = null;
-    try {
-      decoded = await decodeAudio(bytes);
-    } catch (e) {
-      return { ok: false, reason: '소리 읽기 실패' };
+    // 소리가 있는 파일이면(또는 확인이 안 되면) AAC로 다시 담을 수 있어야 한다.
+    var hasAudio = (await detectAudio(file)) !== false;
+    var audioConfig = null;
+    if (hasAudio) {
+      audioConfig = { codec: 'mp4a.40.2', sampleRate: AUDIO_RATE, numberOfChannels: 2, bitrate: AUDIO_BITS };
+      var aok = typeof window.AudioEncoder === 'function'
+        ? await window.AudioEncoder.isConfigSupported(audioConfig).catch(function () { return null; })
+        : null;
+      if (!aok || !aok.supported) return { ok: false, reason: '오디오 인코더 미지원' };
     }
-    bytes = null; // 오디오 디코딩이 끝나면 원본 바이트는 더 들고 있지 않는다
-    if (!decoded || !decoded.length) return { ok: true, audio: null };
-
-    var acfg = { codec: 'mp4a.40.2', sampleRate: AUDIO_RATE, numberOfChannels: 2, bitrate: AUDIO_BITS };
-    var aok = typeof window.AudioEncoder === 'function'
-      ? await window.AudioEncoder.isConfigSupported(acfg).catch(function () { return null; })
-      : null;
-    if (!aok || !aok.supported) return { ok: false, reason: '오디오 인코더 미지원' };
-
-    return { ok: true, audio: decoded, audioConfig: acfg };
+    return { ok: true, hasAudio: hasAudio, audioConfig: audioConfig };
   }
 
   async function transcodeWebCodecs(file, plan, hooks) {
@@ -221,7 +214,7 @@
     var muxer = new mod.Muxer({
       target: new mod.ArrayBufferTarget(),
       video: { codec: 'avc', width: OUT_W, height: OUT_H, frameRate: OUT_FPS },
-      audio: plan.audio ? { codec: 'aac', numberOfChannels: 2, sampleRate: AUDIO_RATE } : undefined,
+      audio: plan.hasAudio ? { codec: 'aac', numberOfChannels: 2, sampleRate: AUDIO_RATE } : undefined,
       fastStart: 'in-memory'
     });
 
@@ -229,41 +222,7 @@
     var config = null;
     var audioChunks = 0;
 
-    // --- 소리 ---
-    if (plan.audio) {
-      hooks.stage('소리 준비 중…', 0.02);
-      var pcm = await toStereo44100(plan.audio);
-      var aenc = new window.AudioEncoder({
-        output: function (chunk, meta) {
-          audioChunks++;
-          muxer.addAudioChunk(chunk, meta && meta.decoderConfig ? { decoderConfig: cloneAudioConfig(meta.decoderConfig) } : undefined);
-        },
-        error: function (e) { failure = e; }
-      });
-      aenc.configure(plan.audioConfig);
-      var frames = pcm.length;
-      var step = AUDIO_RATE; // 1초 단위
-      for (var off = 0; off < frames; off += step) {
-        if (!hooks.alive()) throw new Error('aborted');
-        var n = Math.min(step, frames - off);
-        var planar = new Float32Array(n * 2);
-        planar.set(pcm.getChannelData(0).subarray(off, off + n), 0);
-        planar.set(pcm.getChannelData(1).subarray(off, off + n), n);
-        var data = new window.AudioData({
-          format: 'f32-planar', sampleRate: AUDIO_RATE, numberOfFrames: n,
-          numberOfChannels: 2, timestamp: Math.round(off / AUDIO_RATE * 1e6), data: planar
-        });
-        aenc.encode(data);
-        data.close();
-        hooks.stage('소리 변환 중…', 0.02 + 0.08 * (off / frames));
-      }
-      await aenc.flush();
-      aenc.close();
-      if (failure) throw failure;
-      if (!audioChunks) throw new Error('소리 변환 결과가 비어 있습니다.');
-    }
-
-    // --- 영상 ---
+    // --- 영상 열기 (길이 확인) ---
     var video = document.createElement('video');
     video.muted = true;
     video.playsInline = true;
@@ -279,6 +238,54 @@
       if (!video.videoWidth) throw new Error('영상 정보를 읽지 못했습니다.');
       var duration = video.duration;
       if (!isFinite(duration) || duration <= 0) throw new Error('영상 길이를 알 수 없습니다.');
+      // 긴 영상은 소리를 통째로 풀면 메모리를 너무 많이 쓴다 → 기본 방식으로.
+      if (duration > MAX_ACCEL_SECONDS) throw new Error('긴 영상');
+
+      // --- 소리 ---
+      if (plan.hasAudio) {
+        hooks.stage('소리 준비 중…', 0.02);
+        var bytes = new Uint8Array(await U.readFile(file));
+        var decoded = null;
+        try {
+          decoded = await decodeAudio(bytes);
+        } catch (e) {
+          throw new Error('소리 읽기 실패');
+        }
+        bytes = null;
+        if (!decoded || !decoded.length) throw new Error('소리 읽기 실패');
+
+        var pcm = await toStereo44100(decoded);
+        decoded = null;
+        var aenc = new window.AudioEncoder({
+          output: function (chunk, meta) {
+            audioChunks++;
+            muxer.addAudioChunk(chunk, meta && meta.decoderConfig ? { decoderConfig: cloneAudioConfig(meta.decoderConfig) } : undefined);
+          },
+          error: function (e) { failure = e; }
+        });
+        aenc.configure(plan.audioConfig);
+        var frames = pcm.length;
+        var step = AUDIO_RATE; // 1초 단위
+        for (var off = 0; off < frames; off += step) {
+          if (!hooks.alive()) throw new Error('aborted');
+          var n = Math.min(step, frames - off);
+          var planar = new Float32Array(n * 2);
+          planar.set(pcm.getChannelData(0).subarray(off, off + n), 0);
+          planar.set(pcm.getChannelData(1).subarray(off, off + n), n);
+          var data = new window.AudioData({
+            format: 'f32-planar', sampleRate: AUDIO_RATE, numberOfFrames: n,
+            numberOfChannels: 2, timestamp: Math.round(off / AUDIO_RATE * 1e6), data: planar
+          });
+          aenc.encode(data);
+          data.close();
+          hooks.stage('소리 변환 중…', 0.02 + 0.08 * (off / frames));
+        }
+        await aenc.flush();
+        aenc.close();
+        pcm = null;
+        if (failure) throw failure;
+        if (!audioChunks) throw new Error('소리 변환 결과가 비어 있습니다.');
+      }
 
       var enc = new window.VideoEncoder({
         output: function (chunk, meta) {
