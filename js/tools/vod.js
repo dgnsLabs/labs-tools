@@ -765,10 +765,11 @@
           (missedGoal ? '목표 용량 초과' : '목표 용량 충족') +
           ' · 목표 ' + formatSize(targetBytes) + (missedGoal ? '보다 ' + formatSize(blob.size - targetBytes) + ' 큼' : '') + '</p>') +
         '<div class="row vod-result-actions">' +
-        '<button class="btn primary grow" type="button" id="vod-save">' + (original ? '변환 없이 저장' : 'MP4 저장') + '</button>' +
+        '<a class="btn primary grow" id="vod-save">' + (original ? '변환 없이 저장' : 'MP4 저장') + '</a>' +
         '<button class="btn" type="button" id="vod-share">공유</button>' +
         '<button class="btn ghost" type="button" id="vod-adjust">설정 조정</button></div>' +
-        '<video src="' + state.resultURL + '" controls playsinline preload="metadata" aria-label="변환한 영상 미리보기" class="vod-preview"></video>' +
+        '<p class="hint" id="vod-share-note" role="status" hidden></p>' +
+        '<video src="' + state.resultURL + '" controls controlslist="nodownload" playsinline preload="metadata" aria-label="변환한 영상 미리보기" class="vod-preview"></video>' +
         (over ? '<p class="hint">목표 용량을 줄이거나 영상을 나눠 다시 변환해 주세요.</p>' : '') +
         '</div>';
 
@@ -777,16 +778,20 @@
         sizeMode.focus();
       });
       $('#vod-result-title', resultEl).focus();
-      $('#vod-save', resultEl).addEventListener('click', function () {
-        U.saveOrShare(blob, name, 'VOD 규격 MP4');
-      });
-      $('#vod-share', resultEl).addEventListener('click', function () {
-        U.shareBlob(blob, name, 'VOD 규격 MP4').then(function (ok) {
-          if (!ok) { U.download(blob, name); U.toast('저장했어요'); }
-        }).catch(function (e) {
-          if (e && e.name === 'AbortError') return;
-          U.download(blob, name);
-        });
+      var saveLink = $('#vod-save', resultEl);
+      saveLink.href = state.resultURL;
+      saveLink.download = name;
+      var shareNote = $('#vod-share-note', resultEl);
+      $('#vod-share', resultEl).addEventListener('click', async function () {
+        shareNote.hidden = true;
+        try {
+          if (await U.shareBlob(blob, name, 'VOD 규격 MP4')) return;
+          shareNote.textContent = '이 브라우저에서는 파일을 공유할 수 없어요. 저장 버튼으로 내려받아 주세요.';
+        } catch (error) {
+          if (error && error.name === 'AbortError') return;
+          shareNote.textContent = '공유를 열지 못했어요. 저장 버튼으로 내려받아 주세요.';
+        }
+        shareNote.hidden = false;
       });
     }
 

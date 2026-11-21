@@ -137,7 +137,7 @@ def part_static():
         sw = r.read().decode()
     check("sw precaches app shell", "./index.html" in sw and "./vendor/pdf.min.js" in sw)
     check("sw precaches mp4 muxer", "./vendor/mp4-muxer.mjs" in sw)
-    check("sw cache is v1.3.4", "labs-tools-app-v1.3.4" in sw, sw[:120])
+    check("sw cache is v1.3.5", "labs-tools-app-v1.3.5" in sw, sw[:120])
 
     with urllib.request.urlopen(BASE + "/vendor/qrcode.min.js") as r:
         head = r.read(200).decode("utf-8", "ignore")
@@ -160,7 +160,7 @@ def part_ui(page):
     check("home spec strip is Korean", "도구" in home and "서버 전송" in home and "없음" in home, home[:200])
     check("home has no developer labels",
           not any(w in home for w in ("Offline Utility Suite", "TRANSFER", "INSTALL", "Index", "TOOLS")), home[:200])
-    check("home shows version 1.3.4", "v1.3.4" in home, home[-160:])
+    check("home shows version 1.3.5", "v1.3.5" in home, home[-160:])
     check("card tags are Korean", "[사진]" in home and "[영상]" in home and "[링크]" in home, home[:300])
     check("card tags keep NEW badge", "NEW" in home)
     shot(page, "01-home.png", True)
@@ -648,8 +648,22 @@ def part_vod(page):
     print("  engine:", engine, info)
     check("audio file used fallback path", engine == "ffmpeg", str(engine))
 
+    page.evaluate("""() => {
+        Object.defineProperty(navigator, 'canShare', { configurable: true, value: () => true });
+        Object.defineProperty(navigator, 'share', { configurable: true, value: async () => {
+            window.__vodShareCalls = (window.__vodShareCalls || 0) + 1;
+        }});
+    }""")
+    download_link = page.locator("#vod-save")
+    check("VOD save is a direct download link",
+          download_link.get_attribute("href").startswith("blob:") and bool(download_link.get_attribute("download")))
     with page.expect_download() as dl:
         page.click("#vod-save")
+    check("save never opens the native share sheet", page.evaluate("!window.__vodShareCalls"))
+    page.click("#vod-share")
+    page.wait_for_function("window.__vodShareCalls === 1")
+    check("share still opens the native share sheet", page.evaluate("window.__vodShareCalls === 1"))
+    page.evaluate("delete navigator.canShare; delete navigator.share")
     path = os.path.join(SHOTS, "vod.mp4")
     dl.value.save_as(path)
     check("save button gives mp4", os.path.getsize(path) > 5000, str(os.path.getsize(path)))
