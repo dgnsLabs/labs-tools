@@ -571,6 +571,25 @@ def part_vod(page):
     page.wait_for_timeout(800)
     check("file info shown", "sample.mp4" in page.inner_text("#vod-info"), page.inner_text("#vod-info"))
 
+    # Record the argv the tool actually hands to ffmpeg.wasm.
+    page.evaluate("""() => {
+        window.__vodArgs = [];
+        const mod = window.FFmpegWASM;
+        const Orig = mod.FFmpeg;
+        const Inst = new Proxy(Orig, {
+            construct(target, argv) {
+                const inst = new target(...argv);
+                const run = inst.exec.bind(inst);
+                inst.exec = (args) => { window.__vodArgs.push(args.join(' ')); return run(args); };
+                return inst;
+            }
+        });
+        // The UMD exports are getter-only, so swap the module object itself.
+        window.FFmpegWASM = new Proxy(mod, {
+            get(t, p, r) { return p === 'FFmpeg' ? Inst : Reflect.get(t, p, r); }
+        });
+    }""")
+
     page.click("#vod-go")
     page.wait_for_selector("#vod-result video", timeout=270000)
     check("conversion finished", page.locator("#vod-result video").count() == 1)
@@ -578,6 +597,9 @@ def part_vod(page):
     check("result chips mention mp4", "MP4" in chips, chips[:100])
     check("result chips mention 720", "1280×720" in chips)
     shot(page, "11-vod-result.png", True)
+
+    used_args = page.evaluate("() => window.__vodArgs || []")
+    check("encode uses ultrafast preset", any("-preset ultrafast" in a for a in used_args), str(used_args)[:300])
 
     with page.expect_download() as dl:
         page.click("#vod-save")
@@ -589,6 +611,29 @@ def part_vod(page):
     check("aac track", b"mp4a" in data)
     check("under 400MB", len(data) < 400 * 1024 * 1024, str(len(data)))
     check("output not tiny", len(data) > 20000, str(len(data)))
+
+    # Probe the produced file with the same decoder: resolution, profile, audio.
+    probe = page.evaluate("""async (b64) => {
+        const bin = atob(b64);
+        const bytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        const FF = await Labs.util.ensureLib('ffmpeg');
+        const ff = new FF.FFmpeg();
+        const lines = [];
+        ff.on('log', (e) => { if (e && e.message) lines.push(e.message); });
+        await ff.load({
+            coreURL: Labs.util.vendor('vendor/ffmpeg/ffmpeg-core.js'),
+            wasmURL: Labs.util.vendor('vendor/ffmpeg/ffmpeg-core.wasm')
+        });
+        await ff.writeFile('p.mp4', bytes);
+        try { await ff.exec(['-i', 'p.mp4']); } catch (e) { /* -i alone exits non-zero */ }
+        ff.terminate();
+        return lines.join('\\n');
+    }""", base64.b64encode(data).decode())
+    print("  probe:", " | ".join([l for l in probe.splitlines() if "Stream #" in l or "Duration" in l]))
+    check("probe 1280x720", "1280x720" in probe, probe[-300:])
+    check("probe h264 baseline", "h264 (Baseline)" in probe or "Baseline" in probe, probe[-300:])
+    check("probe aac audio", "aac" in probe.lower(), probe[-300:])
 
 
 # ---------------------------------------------------------------- offline

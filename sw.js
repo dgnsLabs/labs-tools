@@ -5,7 +5,7 @@
    ============================================================ */
 'use strict';
 
-var APP_CACHE = 'labs-tools-app-v1.0.0';
+var APP_CACHE = 'labs-tools-app-v1.1.0';
 var MEDIA_CACHE = 'labs-tools-media-v1';
 var KEEP = [APP_CACHE, MEDIA_CACHE];
 

@@ -216,7 +216,7 @@
   /* ---------------- service worker ---------------- */
   function registerSW() {
     if (!('serviceWorker' in navigator) || !/^https?:$/.test(location.protocol)) return;
-    navigator.serviceWorker.register(new URL('sw.js', U.BASE).href).then(function (reg) {
+    navigator.serviceWorker.register(new URL('sw.js', U.BASE).href, { updateViaCache: 'none' }).then(function (reg) {
       if (reg.waiting) notifyUpdate(reg);
       reg.addEventListener('updatefound', function () {
         var sw = reg.installing;

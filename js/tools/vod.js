@@ -30,7 +30,7 @@
   function pcCommand(level) {
     return 'ffmpeg -i input.mp4 \\\n' +
       '  -vf "' + VF + '" \\\n' +
-      '  -c:v libx264 -profile:v baseline -level:v ' + level + ' -pix_fmt yuv420p \\\n' +
+      '  -c:v libx264 -preset medium -profile:v baseline -level:v ' + level + ' -pix_fmt yuv420p \\\n' +
       '  -b:v 5000k -maxrate 5000k -bufsize 10000k \\\n' +
       '  -c:a aac -b:a 128k -ar 44100 -ac 2 \\\n' +
       '  -movflags +faststart -y output.mp4';
@@ -72,7 +72,7 @@
       '<div class="progress-wrap"><div class="bar"><i id="vod-bar"></i></div>' +
       '<div class="bar-row"><span id="vod-label">대기 중</span><span id="vod-pct"></span></div></div>' +
       '<div class="log" id="vod-log" hidden></div>' +
-      '<p class="hint">첫 변환 때 변환 엔진(약 32MB)을 한 번만 내려받습니다. 이후에는 캐시되어 바로 시작합니다. 폰에서는 실시간보다 느릴 수 있어 1~2분 이내 영상을 권장합니다.</p>' +
+      '<p class="hint">첫 변환 때 변환 엔진(약 32MB)을 한 번만 내려받습니다. 이후에는 캐시되어 바로 시작합니다. 폰 속도를 위해 가장 빠른 프리셋(ultrafast)으로 인코딩하며, 규격(해상도·코덱·비트레이트)은 그대로입니다.</p>' +
       '</div>' +
 
       '<div id="vod-result"></div>' +
@@ -81,7 +81,7 @@
       '<div class="panel-head"><h2>PC에서 변환 (대용량 권장)</h2>' +
       '<button class="btn sm" type="button" id="vod-copy">명령어 복사</button></div>' +
       '<pre class="code" id="vod-cmd">' + U.esc(pcCommand('3.1')) + '</pre>' +
-      '<p class="hint">맥미니·PC에 ffmpeg가 설치되어 있다면 위 한 줄로 같은 결과를 훨씬 빠르게 만들 수 있습니다. 입력 파일 이름은 <span class="mono">input.mp4</span>로 바꿔 실행하세요. (Level 1.3 강제: <span class="mono">-level:v 1.3</span>)</p>' +
+      '<p class="hint">맥미니·PC에 ffmpeg가 설치되어 있다면 위 한 줄로 같은 결과를 훨씬 빠르게 만들 수 있습니다(화질 우선 <span class="mono">-preset medium</span>). 입력 파일 이름은 <span class="mono">input.mp4</span>로 바꿔 실행하세요. (Level 1.3 강제: <span class="mono">-level:v 1.3</span>)</p>' +
       '</div>';
 
     var input = $('#vod-file', root);
@@ -198,6 +198,9 @@
         '-i', inputName,
         '-vf', VF,
         '-c:v', 'libx264',
+        // ultrafast: 폰 브라우저(WASM 단일 스레드)에서는 medium 대비 수 배 빠르다.
+        // 비트레이트를 5000k로 고정하는 규격이라 결과 용량·해상도는 같고 화질만 조금 낮다.
+        '-preset', 'ultrafast',
         '-profile:v', 'baseline',
         '-level:v', level,
         '-pix_fmt', 'yuv420p',
