@@ -110,7 +110,7 @@ def part_static():
         "/js/tools/exif.js", "/js/tools/url.js", "/js/tools/pdf.js", "/js/tools/compress.js",
         "/js/tools/qr.js", "/js/tools/resize.js", "/js/tools/watermark.js", "/js/tools/vod.js",
         "/vendor/pdf.min.js", "/vendor/pdf.worker.min.js", "/vendor/pdf-lib.min.js",
-        "/vendor/jszip.min.js", "/vendor/qrcode.min.js",
+        "/vendor/jszip.min.js", "/vendor/qrcode.min.js", "/vendor/mp4-muxer.mjs",
         "/vendor/ffmpeg/ffmpeg.js", "/vendor/ffmpeg/814.ffmpeg.js",
         "/vendor/ffmpeg/ffmpeg-core.js", "/vendor/ffmpeg/ffmpeg-core.wasm",
         "/icons/icon-192.png", "/icons/icon-512.png", "/icons/icon-maskable-512.png", "/icons/icon-180.png",
@@ -134,6 +134,8 @@ def part_static():
     with urllib.request.urlopen(BASE + "/sw.js") as r:
         sw = r.read().decode()
     check("sw precaches app shell", "./index.html" in sw and "./vendor/pdf.min.js" in sw)
+    check("sw precaches mp4 muxer", "./vendor/mp4-muxer.mjs" in sw)
+    check("sw cache is v1.3.0", "labs-tools-app-v1.3.0" in sw, sw[:120])
 
     with urllib.request.urlopen(BASE + "/vendor/qrcode.min.js") as r:
         head = r.read(200).decode("utf-8", "ignore")
@@ -152,6 +154,13 @@ def part_ui(page):
     cards = page.locator(".tool-card")
     check("8 tool cards", cards.count() == 8, f"count={cards.count()}")
     check("home hero title", page.locator(".hero h1").inner_text().strip() == "Labs Tools")
+    home = page.inner_text("#home")
+    check("home spec strip is Korean", "도구" in home and "서버 전송" in home and "없음" in home, home[:200])
+    check("home has no developer labels",
+          not any(w in home for w in ("Offline Utility Suite", "TRANSFER", "INSTALL", "Index", "TOOLS")), home[:200])
+    check("home shows version 1.3.0", "v1.3.0" in home, home[-160:])
+    check("card tags are Korean", "[사진]" in home and "[영상]" in home and "[링크]" in home, home[:300])
+    check("card tags keep NEW badge", "NEW" in home)
     shot(page, "01-home.png", True)
 
     tools = ["exif", "url", "pdf", "compress", "qr", "resize", "watermark", "vod"]
@@ -529,32 +538,21 @@ def part_watermark(page):
 
 
 # ---------------------------------------------------------------- vod
-def part_vod(page):
-    print("\n[vod] spec, command, real browser transcode")
-    page.goto(BASE + "/#/tool/vod")
-    page.wait_for_selector("#vod-cmd")
-    body = page.inner_text("#tool-vod")
-    for token in ["MP4", "Baseline Level 1.3", "1280×720", "5000 kbps", "AAC", "400 MB"]:
-        check(f"spec shows {token}", token in body, token)
-    cmd = page.inner_text("#vod-cmd")
-    check("pc command has libx264", "-c:v libx264" in cmd, cmd[:80])
-    check("pc command has aac", "-c:a aac" in cmd)
-    check("pc command faststart", "+faststart" in cmd)
-
-    shot(page, "10-vod.png", True)
-
-    # Build a 2s test clip with the same ffmpeg build (first load ~32MB).
-    print("  … generating sample.mp4 with ffmpeg.wasm (may take a minute)")
-    b64 = page.evaluate("""async () => {
+def make_vod_sample(page, with_audio):
+    """Build a 2s 640x360 H.264 clip with the vendored ffmpeg.wasm."""
+    b64 = page.evaluate("""async (withAudio) => {
         const FF = await Labs.util.ensureLib('ffmpeg');
         const ff = new FF.FFmpeg();
         await ff.load({
             coreURL: Labs.util.vendor('vendor/ffmpeg/ffmpeg-core.js'),
             wasmURL: Labs.util.vendor('vendor/ffmpeg/ffmpeg-core.wasm')
         });
-        await ff.exec(['-f','lavfi','-i','testsrc=size=640x360:rate=24',
-                       '-f','lavfi','-i','sine=frequency=440:sample_rate=44100',
-                       '-t','2','-c:v','libx264','-pix_fmt','yuv420p','-c:a','aac','-shortest','-y','t.mp4']);
+        const args = ['-f','lavfi','-i','testsrc=size=640x360:rate=24'];
+        if (withAudio) args.push('-f','lavfi','-i','sine=frequency=440:sample_rate=44100');
+        args.push('-t','2','-c:v','libx264','-pix_fmt','yuv420p');
+        if (withAudio) args.push('-c:a','aac','-shortest');
+        args.push('-y','t.mp4');
+        await ff.exec(args);
         const d = await ff.readFile('t.mp4');
         let s = '';
         for (let i = 0; i < d.length; i += 8192) {
@@ -562,58 +560,18 @@ def part_vod(page):
         }
         ff.terminate();
         return btoa(s);
-    }""")
-    sample = os.path.join(FIX, "sample.mp4")
-    open(sample, "wb").write(base64.b64decode(b64))
-    check("sample clip generated", os.path.getsize(sample) > 5000, str(os.path.getsize(sample)))
+    }""", with_audio)
+    name = "sample.mp4" if with_audio else "sample-silent.mp4"
+    path = os.path.join(FIX, name)
+    open(path, "wb").write(base64.b64decode(b64))
+    check(f"{name} generated", os.path.getsize(path) > 2000, str(os.path.getsize(path)))
+    return path
 
-    page.set_input_files("#vod-file", sample)
-    page.wait_for_timeout(800)
-    check("file info shown", "sample.mp4" in page.inner_text("#vod-info"), page.inner_text("#vod-info"))
 
-    # Record the argv the tool actually hands to ffmpeg.wasm.
-    page.evaluate("""() => {
-        window.__vodArgs = [];
-        const mod = window.FFmpegWASM;
-        const Orig = mod.FFmpeg;
-        const Inst = new Proxy(Orig, {
-            construct(target, argv) {
-                const inst = new target(...argv);
-                const run = inst.exec.bind(inst);
-                inst.exec = (args) => { window.__vodArgs.push(args.join(' ')); return run(args); };
-                return inst;
-            }
-        });
-        // The UMD exports are getter-only, so swap the module object itself.
-        window.FFmpegWASM = new Proxy(mod, {
-            get(t, p, r) { return p === 'FFmpeg' ? Inst : Reflect.get(t, p, r); }
-        });
-    }""")
-
-    page.click("#vod-go")
-    page.wait_for_selector("#vod-result video", timeout=270000)
-    check("conversion finished", page.locator("#vod-result video").count() == 1)
-    chips = page.inner_text("#vod-result")
-    check("result chips mention mp4", "MP4" in chips, chips[:100])
-    check("result chips mention 720", "1280×720" in chips)
-    shot(page, "11-vod-result.png", True)
-
-    used_args = page.evaluate("() => window.__vodArgs || []")
-    check("encode uses ultrafast preset", any("-preset ultrafast" in a for a in used_args), str(used_args)[:300])
-
-    with page.expect_download() as dl:
-        page.click("#vod-save")
-    path = os.path.join(SHOTS, "vod.mp4")
-    dl.value.save_as(path)
+def probe_video(page, path):
+    """Read stream/duration lines of an MP4 with ffmpeg.wasm (the browser's own decoder)."""
     data = open(path, "rb").read()
-    check("mp4 ftyp", data[4:8] == b"ftyp", data[:12])
-    check("h264 track", b"avc1" in data)
-    check("aac track", b"mp4a" in data)
-    check("under 400MB", len(data) < 400 * 1024 * 1024, str(len(data)))
-    check("output not tiny", len(data) > 20000, str(len(data)))
-
-    # Probe the produced file with the same decoder: resolution, profile, audio.
-    probe = page.evaluate("""async (b64) => {
+    return page.evaluate("""async (b64) => {
         const bin = atob(b64);
         const bytes = new Uint8Array(bin.length);
         for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
@@ -630,10 +588,96 @@ def part_vod(page):
         ff.terminate();
         return lines.join('\\n');
     }""", base64.b64encode(data).decode())
+
+
+def part_vod(page):
+    print("\n[vod] plain-language screen, WebCodecs fast path + ffmpeg fallback")
+    page.goto(BASE + "/#/tool/vod")
+    page.wait_for_selector("#vod-drop")
+    body = page.inner_text("#tool-vod")
+
+    # 1) 일반인이 읽는 화면
+    check("plain spec line", "업로드 규격(HD 720p MP4 · 400MB 이하)에 맞춰 자동으로 변환해 드려요" in body, body[:160])
+    check("no pc/terminal panel", "PC에서 변환" not in body and "명령어" not in body, body[:200])
+    check("no ffmpeg/command box", page.locator("#vod-cmd").count() == 0 and "ffmpeg" not in body.lower())
+    check("no codec-level jargon", "Level" not in body and "kbps" not in body and "Baseline" not in body, body[:200])
+    for token in ("HD 720p", "MP4", "400MB"):
+        check(f"spec chip {token}", token in body, token)
+    shot(page, "10-vod.png", True)
+
+    # 2) 큰 파일 안내는 터미널 명령 대신 사람의 말 + PC 주소
+    notice = page.evaluate("() => Labs.tools.vod.largeNotice(160 * 1024 * 1024)")
+    check("large notice suggests pc browser", "PC 브라우저에서 같은 주소를 열어" in notice, notice)
+    check("large notice names no command", "ffmpeg" not in notice.lower() and "-i" not in notice, notice)
+    huge = page.evaluate("() => Labs.tools.vod.largeNotice(420 * 1024 * 1024)")
+    check("over 400MB notice", "400MB가 넘는" in huge, huge)
+
+    # 3) 소리가 있는 영상 → 이 브라우저는 AAC 인코더가 없어 ffmpeg 경로로 폴백
+    sample = make_vod_sample(page, True)
+    page.set_input_files("#vod-file", sample)
+    page.wait_for_timeout(800)
+    check("file info shown", "sample.mp4" in page.inner_text("#vod-info"), page.inner_text("#vod-info"))
+
+    page.click("#vod-go")
+    page.wait_for_selector("#vod-result .vod-verdict", timeout=280000)
+    check("conversion finished", page.locator("#vod-result video").count() == 1)
+    verdict = page.inner_text("#vod-result .vod-verdict")
+    check("result says spec passed", "업로드 규격 통과" in verdict, verdict)
+    chips = page.inner_text("#vod-result")
+    check("result shows size limit", "400MB 이하" in chips, chips[:160])
+    check("result shows 720p + mp4", "HD 720p" in chips and "MP4" in chips, chips[:160])
+    shot(page, "11-vod-result.png", True)
+
+    engine = page.get_attribute("#tool-vod", "data-engine")
+    info = page.evaluate("() => window.__labsVod || null")
+    print("  engine:", engine, info)
+    check("audio file used fallback path", engine == "ffmpeg", str(engine))
+
+    with page.expect_download() as dl:
+        page.click("#vod-save")
+    path = os.path.join(SHOTS, "vod.mp4")
+    dl.value.save_as(path)
+    check("save button gives mp4", os.path.getsize(path) > 5000, str(os.path.getsize(path)))
+    data = open(path, "rb").read()
+    check("mp4 ftyp", data[4:8] == b"ftyp", data[:12])
+    check("h264 track", b"avc1" in data)
+    check("aac track", b"mp4a" in data)
+    check("under 400MB", len(data) < 400 * 1024 * 1024, str(len(data)))
+
+    probe = probe_video(page, path)
     print("  probe:", " | ".join([l for l in probe.splitlines() if "Stream #" in l or "Duration" in l]))
-    check("probe 1280x720", "1280x720" in probe, probe[-300:])
-    check("probe h264 baseline", "h264 (Baseline)" in probe or "Baseline" in probe, probe[-300:])
-    check("probe aac audio", "aac" in probe.lower(), probe[-300:])
+    check("fallback probe 1280x720", "1280x720" in probe, probe[-300:])
+    check("fallback probe h264 baseline", "Baseline" in probe, probe[-300:])
+    check("fallback probe aac audio", "aac" in probe.lower(), probe[-300:])
+
+    # 4) 소리가 없는 영상 → WebCodecs 가속 경로가 끝까지 수행된다
+    silent = make_vod_sample(page, False)
+    page.set_input_files("#vod-file", silent)
+    page.wait_for_timeout(800)
+    page.click("#vod-go")
+    page.wait_for_selector("#vod-result .vod-verdict", timeout=280000)
+    engine2 = page.get_attribute("#tool-vod", "data-engine")
+    info2 = page.evaluate("() => window.__labsVod || null")
+    print("  engine:", engine2, info2)
+    check("silent file used WebCodecs path", engine2 == "webcodecs", str(engine2) + " " + str(info2))
+    shot(page, "11-vod-webcodecs.png", True)
+
+    with page.expect_download() as dl:
+        page.click("#vod-save")
+    wpath = os.path.join(SHOTS, "vod-webcodecs.mp4")
+    dl.value.save_as(wpath)
+    wdata = open(wpath, "rb").read()
+    check("webcodecs mp4 ftyp", wdata[4:8] == b"ftyp", wdata[:12])
+    check("webcodecs h264 track", b"avc1" in wdata)
+    check("webcodecs no audio track", b"mp4a" not in wdata)
+    check("webcodecs output not tiny", len(wdata) > 10000, str(len(wdata)))
+
+    wprobe = probe_video(page, wpath)
+    print("  probe:", " | ".join([l for l in wprobe.splitlines() if "Stream #" in l or "Duration" in l]))
+    check("webcodecs probe 1280x720", "1280x720" in wprobe, wprobe[-300:])
+    check("webcodecs probe h264 baseline", "Baseline" in wprobe, wprobe[-300:])
+    check("webcodecs probe duration ~2s", "Duration: 00:00:01" in wprobe or "Duration: 00:00:02" in wprobe, wprobe[-300:])
+    check("webcodecs probe has 60 frames", "60 fps" in wprobe or "30 fps" in wprobe or "frames" in wprobe.lower(), wprobe[-400:])
 
 
 # ---------------------------------------------------------------- offline

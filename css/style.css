@@ -162,11 +162,11 @@ main { flex: 1; width: 100%; }
 .hero-eyebrow {
   display: flex; align-items: center; gap: 10px;
   margin: 0 0 14px;
-  font-family: var(--mono); font-size: 9.5px; font-weight: 500;
-  letter-spacing: .16em; text-transform: uppercase; color: var(--muted);
+  font-size: 10px; font-weight: 600;
+  letter-spacing: .02em; color: var(--muted);
 }
 .hero-eyebrow .rule { flex: 1; height: 1px; background: var(--border); }
-.hero-ver { color: var(--accent-text); letter-spacing: .08em; text-transform: none; }
+.hero-ver { color: var(--accent-text); font-family: var(--mono); letter-spacing: .06em; font-size: 9.5px; }
 .hero h1 {
   margin: 0 0 10px;
   font-size: clamp(30px, 8.2vw, 38px);
@@ -195,21 +195,22 @@ main { flex: 1; width: 100%; }
 .spec-strip > div + div { border-left: 1px solid var(--border); padding-left: 12px; }
 .spec-strip dt {
   margin: 0;
-  font-family: var(--mono); font-size: 8.5px; letter-spacing: .16em;
-  text-transform: uppercase; color: var(--faint);
+  font-size: 10px; letter-spacing: .01em;
+  color: var(--muted);
 }
 .spec-strip dd {
   margin: 4px 0 0;
-  font-family: var(--mono); font-size: 12.5px; letter-spacing: .06em;
+  font-size: 13px; font-weight: 600; letter-spacing: .01em;
   color: var(--text); font-variant-numeric: tabular-nums;
 }
 
 .grid-head {
   display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
   margin: 0 0 9px;
-  font-family: var(--mono); font-size: 9px; letter-spacing: .16em;
-  text-transform: uppercase; color: var(--faint);
+  font-size: 10px; font-weight: 600; letter-spacing: .01em;
+  color: var(--muted);
 }
+.grid-head span:last-child { font-family: var(--mono); color: var(--faint); letter-spacing: .04em; }
 
 .tool-grid {
   display: grid;
@@ -236,9 +237,9 @@ main { flex: 1; width: 100%; }
 
 .card-bar {
   display: flex; align-items: center; justify-content: space-between; gap: 8px;
-  font-family: var(--mono); font-size: 9px; letter-spacing: .08em;
-  text-transform: uppercase;
+  font-size: 10px; letter-spacing: .01em;
 }
+.card-bar .idx { font-family: var(--mono); }
 .tool-card .tag { color: var(--accent-text); }
 .tool-card .idx { color: var(--faint); font-variant-numeric: tabular-nums; }
 
@@ -278,8 +279,8 @@ main { flex: 1; width: 100%; }
 }
 .home-note .note-label {
   margin: 0 0 7px;
-  font-family: var(--mono); font-size: 9px; letter-spacing: .16em;
-  text-transform: uppercase; color: var(--faint);
+  font-size: 10px; font-weight: 600; letter-spacing: .01em;
+  color: var(--muted);
 }
 .home-note strong { color: var(--text); font-weight: 650; }
 .home-note p { margin: 0; }
@@ -549,6 +550,23 @@ input[type="color"] {
   word-break: break-all;
   max-height: 200px;
   overflow: auto;
+}
+
+/* ---------------- vod ---------------- */
+.vod-lead { margin: 0; font-size: 12.5px; color: var(--text); line-height: 1.6; word-break: keep-all; }
+.vod-verdict {
+  display: flex; align-items: center; gap: 8px;
+  margin: 0;
+  font-size: 14px; font-weight: 650; letter-spacing: -.01em;
+  color: var(--ok);
+}
+.vod-verdict.bad { color: var(--danger); }
+.vod-check {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 18px; height: 18px; flex: none;
+  border-radius: 2px;
+  border: 1px solid currentColor;
+  font-family: var(--mono); font-size: 11px; font-weight: 700; line-height: 1;
 }
 
 /* ---------------- progress ---------------- */

@@ -18,7 +18,7 @@
 | 5 | QR 생성기 | 링크·텍스트·Wi-Fi QR, PNG/SVG 저장 (만료 없음) |
 | 6 | 비율 리사이즈 | 1:1 · 4:5 · 9:16 · 16:9 · 3:4, 흰색/검정/블러 여백, 잘림 없음 |
 | 7 | 워터마크 | 텍스트·로고 일괄 합성, 투명도·크기·위치(우하단/중앙/타일), ZIP 저장 |
-| 8 | VOD 규격 변환 | MP4 / H.264 Baseline / 1280×720 / 5000kbps / AAC / 400MB 규격으로 브라우저에서 변환 |
+| 8 | VOD 규격 변환 | 업로드 규격(HD 720p MP4 · 400MB 이하)으로 자동 변환. WebCodecs 가속 + ffmpeg.wasm 폴백 |
 
 ### 콘텐츠 규격 (2MB) 프리셋
 
@@ -28,16 +28,28 @@
 
 ### VOD 규격 변환
 
-- 대상 규격: `MP4 / H.264 (Baseline Level 1.3) / 1280×720 HD / 5000 kbps 이하 / AAC / 400 MB 이하`
-- `@ffmpeg/ffmpeg` 0.12.10 + `@ffmpeg/core` 0.12.6 **단일 스레드(UMD)** 빌드를 `vendor/ffmpeg/`에 두고,
-  **변환을 시작할 때만** 내려받습니다(홈 로딩 영향 없음, Service Worker는 core를 미리 캐시하지 않음).
-- 1280×720은 H.264 표준상 Level 3.1이 필요하므로 `-level:v 1.3`을 먼저 시도하고,
-  인코더가 거부하면 `3.1`로 자동 재시도합니다. 결과 칩에는 파일에 실제로 기록된 레벨을 표시합니다.
-- 브라우저 변환은 WASM 단일 스레드라 느리므로 **`-preset ultrafast`** 로 인코딩합니다(같은 비트레이트 규격이라
-  용량·해상도는 그대로, 화질만 약간 낮음). PC 안내 명령은 화질 우선 `-preset medium`을 씁니다.
-- 폰 메모리 한계를 고려해 1~2분 이내 영상을 권장하며, 대용량은 화면의 `ffmpeg` 한 줄 명령을 PC에서 실행하도록 안내합니다.
+화면에는 업로드 규격 한 줄(`HD 720p MP4 · 400MB 이하`)만 보여주고, 코덱·레벨·비트레이트 표와
+`ffmpeg` 명령어 안내는 두지 않습니다. 150MB가 넘는 파일을 고르면 터미널 명령 대신
+“PC 브라우저에서 같은 주소를 열어 변환하면 훨씬 빠르다”는 안내와 주소 복사 버튼을 보여줍니다.
+
+- 출력 규격: `MP4 / H.264 Baseline / 1280×720 / 5000 kbps 이하 / AAC 44.1kHz / 400 MB 이하`
+- **1순위 — WebCodecs 가속(`js/tools/vod.js`)**
+  `VideoEncoder`(`avc1.42001f`, 1280×720) + `vendor/mp4-muxer.mjs`(mp4-muxer 5.2.2, ESM 로컬 번들)로
+  영상을 다시 인코딩하고, 소리는 `decodeAudioData`로 PCM을 얻어 `AudioEncoder`(`mp4a.40.2`)로 AAC를 만듭니다.
+  프레임은 `<video>`를 1/30초 간격으로 탐색하며 1280×720 캔버스(레터박스)에 그려 넣습니다 —
+  브라우저가 디코딩·인코딩을 기기 가속으로 처리하므로 WASM 경로보다 훨씬 빠릅니다.
+- **2순위 — ffmpeg.wasm 폴백**
+  WebCodecs 미지원(비보안 연결·구형 브라우저·비 MP4 컨테이너), H.264 인코더 미지원, 소리 디코딩 실패,
+  AAC 인코더 미지원(예: Linux Chromium), 인코딩 오류 중 하나라도 걸리면 자동으로 기존
+  `@ffmpeg/ffmpeg` 0.12.10 + core 0.12.6 (단일 스레드, `-preset ultrafast`) 경로로 넘어갑니다.
+  두 경로의 결과 규격(MP4 · H.264 Baseline · 1280×720 · AAC · 5000kbps 이하)은 같습니다.
+- ffmpeg core(약 32MB)는 변환을 시작할 때만 내려받고 Service Worker는 core를 미리 캐시하지 않습니다.
+- 결과에는 `업로드 규격 통과` 판정과 용량(`400MB 이하`), `HD 720p` `MP4` 칩, 미리보기,
+  `MP4 저장`/`공유` 버튼을 보여줍니다.
 - Service Worker 앱 셸 캐시는 버전(`labs-tools-app-vX.Y.Z`)으로 관리하며, `sw.js` 등록은 `updateViaCache: 'none'`이라
   배포 직후 새로고침 한두 번이면 새 파일로 바뀝니다.
+- 테스트는 소리 있는 샘플(→ 폴백 경로, AAC 확인)과 소리 없는 샘플(→ WebCodecs 경로)을 각각 변환해
+  ffmpeg.wasm으로 실제 코덱·해상도·길이를 검증합니다.
 
 ## 구조
 
@@ -49,7 +61,7 @@ css/style.css         Geist 흑백 헤어라인 그리드 + 시그널 오렌지(
 js/app.js             홈 화면 · 라우터 · 테마 · SW 등록
 js/lib/common.js      공통 유틸 (스크립트/라이브러리 지연 로드, 저장·공유, ZIP 등)
 js/tools/*.js         도구 8종 (각 도구는 진입할 때만 로드)
-vendor/               pdf.js 3.11.174 · pdf-lib 1.17.1 · JSZip 3.10.1 · qrcode-generator 1.4.4
+vendor/               pdf.js 3.11.174 · pdf-lib 1.17.1 · JSZip 3.10.1 · qrcode-generator 1.4.4 · mp4-muxer 5.2.2(ESM)
 vendor/ffmpeg/        ffmpeg.wasm 0.12.10 (UMD) + core 0.12.6 (단일 스레드)
 icons/                PNG 아이콘 192 · 512 · maskable 512 · apple-touch 180
 tools/make-icons.py   아이콘 재생성 스크립트
@@ -61,7 +73,8 @@ tests/make-fixtures.py 테스트용 이미지/PDF 생성
 
 홈은 서버리스 유틸리티답게 **1px 헤어라인 2열(넓은 화면 4열) 그리드**로만 구성합니다.
 카드 안에 파스텔 타일이나 라운드 배지를 두지 않고, 25px 듀오톤 아이콘과 모노스페이스 태그
-(`[IMG]` `[NET]` `[DOC]` `[GEN]` `[VID]`) · 번호(`01`~`08`)로 구분합니다.
+(`[사진]` `[링크]` `[문서]` `[QR]` `[영상]`) · 번호(`01`~`08`)로 구분합니다.
+라벨은 개발자 용어 대신 일반인이 바로 읽는 한국어입니다(`서버 전송 없음`, `앱처럼 쓰기`).
 
 - 바탕: 다크 `#000000` / 라이트 `#ffffff`, 보더 `#222222` / `#e5e5e5`
 - 포인트 컬러는 **시그널 오렌지 `#ff5a1f` 하나** — 상단 LED, 태그, `NEW`, primary 버튼,
@@ -92,7 +105,7 @@ python3 tests/e2e.py url qr     # 일부만
 `tests/e2e.py`는 임시 HTTP 서버를 띄워 모바일 크기(390×844) Chromium으로
 정적 파일 200 응답, 콘솔/페이지 에러 0건, 8개 도구 진입, URL 정리 규칙,
 QR 생성·디코딩, EXIF 제거·모자이크·되돌리기, 2MB 프리셋, PDF 양방향 변환,
-비율 리사이즈, 워터마크 ZIP, ffmpeg.wasm 실제 변환, 오프라인 로딩까지 확인한 뒤
+비율 리사이즈, 워터마크 ZIP, VOD 실제 변환(WebCodecs 경로 · ffmpeg 폴백 경로 각각), 오프라인 로딩까지 확인한 뒤
 서버를 종료합니다. 스크린샷은 `tests/shots/`에 남습니다.
 
 ## 배포

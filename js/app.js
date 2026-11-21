@@ -48,14 +48,14 @@
   };
 
   var TOOLS = [
-    { id: 'exif', title: '사진 EXIF 제거·모자이크', short: '위치 정보 지우고 민감한 곳 가리기', icon: 'exif', tag: 'IMG', script: 'js/tools/exif.js' },
-    { id: 'url', title: 'URL 추적 제거', short: 'igsh · utm 등 추적 파라미터 삭제', icon: 'url', tag: 'NET', script: 'js/tools/url.js' },
-    { id: 'pdf', title: 'PDF ↔ 이미지', short: '페이지를 PNG로, 사진을 PDF로', icon: 'pdf', tag: 'DOC', script: 'js/tools/pdf.js' },
-    { id: 'compress', title: '이미지 압축·변환', short: 'JPG · PNG · WebP 용량 줄이기', icon: 'compress', tag: 'IMG', script: 'js/tools/compress.js' },
-    { id: 'qr', title: 'QR 생성기', short: '링크 · 텍스트 · Wi-Fi QR 즉시 생성', icon: 'qr', tag: 'GEN', script: 'js/tools/qr.js' },
-    { id: 'resize', title: '비율 리사이즈', short: '1:1 · 4:5 · 9:16 여백 맞춤', icon: 'resize', tag: 'IMG', script: 'js/tools/resize.js' },
-    { id: 'watermark', title: '워터마크', short: '@아이디 · 로고 일괄 합성', icon: 'watermark', tag: 'IMG', script: 'js/tools/watermark.js' },
-    { id: 'vod', title: 'VOD 규격 변환', short: 'MP4 · H.264 720p · AAC 규격으로', icon: 'vod', tag: 'VID', script: 'js/tools/vod.js', isNew: true }
+    { id: 'exif', title: '사진 EXIF 제거·모자이크', short: '위치 정보 지우고 민감한 곳 가리기', icon: 'exif', tag: '사진', script: 'js/tools/exif.js' },
+    { id: 'url', title: 'URL 추적 제거', short: 'igsh · utm 등 추적 파라미터 삭제', icon: 'url', tag: '링크', script: 'js/tools/url.js' },
+    { id: 'pdf', title: 'PDF ↔ 이미지', short: '페이지를 PNG로, 사진을 PDF로', icon: 'pdf', tag: '문서', script: 'js/tools/pdf.js' },
+    { id: 'compress', title: '이미지 압축·변환', short: 'JPG · PNG · WebP 용량 줄이기', icon: 'compress', tag: '사진', script: 'js/tools/compress.js' },
+    { id: 'qr', title: 'QR 생성기', short: '링크 · 텍스트 · Wi-Fi QR 즉시 생성', icon: 'qr', tag: 'QR', script: 'js/tools/qr.js' },
+    { id: 'resize', title: '비율 리사이즈', short: '1:1 · 4:5 · 9:16 여백 맞춤', icon: 'resize', tag: '사진', script: 'js/tools/resize.js' },
+    { id: 'watermark', title: '워터마크', short: '@아이디 · 로고 일괄 합성', icon: 'watermark', tag: '사진', script: 'js/tools/watermark.js' },
+    { id: 'vod', title: 'VOD 규격 변환', short: '업로드 규격(HD 720p MP4)으로 자동 변환', icon: 'vod', tag: '영상', script: 'js/tools/vod.js', isNew: true }
   ];
 
   window.Labs.meta = TOOLS;
@@ -95,26 +95,26 @@
     homeEl.innerHTML =
       '<section class="home">' +
       '<div class="hero">' +
-      '<p class="hero-eyebrow"><span>Offline Utility Suite</span><span class="rule"></span>' +
-      '<span class="hero-ver">v1.2.0</span></p>' +
+      '<p class="hero-eyebrow"><span>오프라인 생활 도구</span><span class="rule"></span>' +
+      '<span class="hero-ver">v1.3.0</span></p>' +
       '<h1>Labs Tools</h1>' +
       '<p>서버 없이, 폰에서 바로 쓰는 8가지 도구. 사진·PDF·링크·영상을 기기 안에서만 처리합니다.</p>' +
       '</div>' +
       '<dl class="spec-strip">' +
-      '<div><dt>Tools</dt><dd>08</dd></div>' +
-      '<div><dt>Offline</dt><dd>READY</dd></div>' +
-      '<div><dt>Transfer</dt><dd>NONE</dd></div>' +
+      '<div><dt>도구</dt><dd>8개</dd></div>' +
+      '<div><dt>인터넷 없이</dt><dd>사용 가능</dd></div>' +
+      '<div><dt>서버 전송</dt><dd>없음</dd></div>' +
       '</dl>' +
-      '<div class="grid-head"><span>Index</span><span>01 — 08</span></div>' +
+      '<div class="grid-head"><span>도구 목록</span><span>01 — 08</span></div>' +
       '<div class="tool-grid">' + cards + '</div>' +
       '<div class="home-note" id="install-note">' +
-      '<p class="note-label">// Install</p>' +
+      '<p class="note-label">앱처럼 쓰기</p>' +
       '<p><strong>홈 화면에 추가하면 앱처럼 열립니다.</strong> 브라우저 메뉴에서 ' +
       '<b>“홈 화면에 추가”</b>를 누르면 주소창 없이 전체 화면으로 실행되고, ' +
       '한 번 열어 두면 인터넷 없이도 동작합니다.</p>' +
       '<div id="install-slot"></div>' +
       '</div>' +
-      '<footer>v1.2.0 · 모든 변환은 이 브라우저 안에서만 이루어지며 파일은 어디에도 전송되지 않습니다.</footer>' +
+      '<footer>v1.3.0 · 모든 변환은 이 브라우저 안에서만 이루어지며 파일은 어디에도 전송되지 않습니다.</footer>' +
       '</section>';
   }
 

@@ -5,7 +5,7 @@
    ============================================================ */
 'use strict';
 
-var APP_CACHE = 'labs-tools-app-v1.2.0';
+var APP_CACHE = 'labs-tools-app-v1.3.0';
 var MEDIA_CACHE = 'labs-tools-media-v1';
 var KEEP = [APP_CACHE, MEDIA_CACHE];
 
@@ -29,6 +29,7 @@ var PRECACHE = [
   './vendor/pdf-lib.min.js',
   './vendor/jszip.min.js',
   './vendor/qrcode.min.js',
+  './vendor/mp4-muxer.mjs',
   './vendor/ffmpeg/ffmpeg.js',
   './vendor/ffmpeg/814.ffmpeg.js',
   './icons/icon-192.png',
