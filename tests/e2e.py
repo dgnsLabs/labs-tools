@@ -137,7 +137,7 @@ def part_static():
         sw = r.read().decode()
     check("sw precaches app shell", "./index.html" in sw and "./vendor/pdf.min.js" in sw)
     check("sw precaches mp4 muxer", "./vendor/mp4-muxer.mjs" in sw)
-    check("sw cache is v1.3.2", "labs-tools-app-v1.3.2" in sw, sw[:120])
+    check("sw cache is v1.3.3", "labs-tools-app-v1.3.3" in sw, sw[:120])
 
     with urllib.request.urlopen(BASE + "/vendor/qrcode.min.js") as r:
         head = r.read(200).decode("utf-8", "ignore")
@@ -160,7 +160,7 @@ def part_ui(page):
     check("home spec strip is Korean", "도구" in home and "서버 전송" in home and "없음" in home, home[:200])
     check("home has no developer labels",
           not any(w in home for w in ("Offline Utility Suite", "TRANSFER", "INSTALL", "Index", "TOOLS")), home[:200])
-    check("home shows version 1.3.2", "v1.3.2" in home, home[-160:])
+    check("home shows version 1.3.3", "v1.3.3" in home, home[-160:])
     check("card tags are Korean", "[사진]" in home and "[영상]" in home and "[링크]" in home, home[:300])
     check("card tags keep NEW badge", "NEW" in home)
     shot(page, "01-home.png", True)
@@ -606,6 +606,8 @@ def part_vod(page):
     check("no codec-level jargon", "Level" not in body and "kbps" not in body and "Baseline" not in body, body[:200])
     for token in ("HD 720p", "MP4", "400MB"):
         check(f"spec chip {token}", token in body, token)
+    check("file picker is a named button", page.get_by_role("button", name="영상 선택", exact=False).is_visible())
+    check("change action waits for a selected file", not page.locator("#vod-change").is_visible())
     shot(page, "10-vod.png", True)
 
     # 2) 큰 파일 안내는 터미널 명령 대신 사람의 말 + PC 주소
@@ -620,8 +622,11 @@ def part_vod(page):
     page.evaluate("() => { window.__testAudioEncoder = window.AudioEncoder; window.AudioEncoder = undefined; }")
     page.set_input_files("#vod-file", sample)
     page.wait_for_timeout(800)
-    check("file info shown", "sample.mp4" in page.inner_text("#vod-info"), page.inner_text("#vod-info"))
+    check("file info shown", "sample.mp4" in page.inner_text("#vod-name"), page.inner_text("#vod-name"))
 
+    check("selected file replaces the empty picker",
+          not page.locator("#vod-pick").is_visible() and page.locator("#vod-change").is_visible())
+    check("closed settings show automatic mode", "자동" in page.inner_text("#vod-setting-value"))
     page.click("#vod-go")
     page.wait_for_selector("#vod-result .vod-verdict", timeout=280000)
     check("conversion finished", page.locator("#vod-result video").count() == 1)
@@ -630,6 +635,12 @@ def part_vod(page):
     chips = page.inner_text("#vod-result")
     check("result shows size limit", "400MB 이하" in chips, chips[:160])
     check("result shows 720p + mp4", "HD 720p" in chips and "MP4" in chips, chips[:160])
+    check("completion focuses result heading",
+          page.evaluate("document.activeElement.id") == "vod-result-title")
+    comparison = page.inner_text("#vod-size-comparison")
+    check("result compares source and output", "원본" in comparison and "→ 결과" in comparison, comparison)
+    check("save is the completion primary action", "primary" in page.get_attribute("#vod-save", "class")
+          and "primary" not in page.get_attribute("#vod-go", "class"))
     shot(page, "11-vod-result.png", True)
 
     engine = page.get_attribute("#tool-vod", "data-engine")
@@ -712,6 +723,10 @@ def part_vod(page):
     page.wait_for_selector("#vod-result .vod-verdict", timeout=90000)
     check("over-goal result still shows upload pass", "업로드 규격 통과" in page.inner_text("#vod-result .vod-verdict"))
     check("over-goal result warns of actual size", "목표 용량 초과" in page.inner_text("#vod-goal"))
+    check("over-goal result quantifies excess", "큼" in page.inner_text("#vod-goal"))
+    page.click("#vod-adjust")
+    check("adjust returns keyboard focus to output settings",
+          page.evaluate("document.activeElement.id") == "vod-size-mode")
     page.evaluate("() => { window.FFmpegWASM = window.__testRealFFmpeg; }")
     mode.select_option("auto")
 
