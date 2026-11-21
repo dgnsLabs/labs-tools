@@ -98,8 +98,9 @@ Service Worker와 클립보드는 `localhost` 또는 HTTPS에서만 동작합니
 pip install playwright pillow pypdf
 python3 -m playwright install chromium
 python3 tests/make-fixtures.py
-python3 tests/e2e.py            # 전체
+python3 tests/e2e.py            # 로컬 전체
 python3 tests/e2e.py url qr     # 일부만
+python3 tests/live.py           # 배포된 Pages 사이트 검증
 ```
 
 `tests/e2e.py`는 임시 HTTP 서버를 띄워 모바일 크기(390×844) Chromium으로
@@ -107,6 +108,7 @@ python3 tests/e2e.py url qr     # 일부만
 QR 생성·디코딩, EXIF 제거·모자이크·되돌리기, 2MB 프리셋, PDF 양방향 변환,
 비율 리사이즈, 워터마크 ZIP, VOD 실제 변환(WebCodecs 경로 · ffmpeg 폴백 경로 각각), 오프라인 로딩까지 확인한 뒤
 서버를 종료합니다. 스크린샷은 `tests/shots/`에 남습니다.
+`tests/live.py`는 같은 검사를 배포 주소에서 한 번 더 수행합니다(홈·VOD 화면, WebCodecs 변환과 폴백).
 
 ## 배포
 
