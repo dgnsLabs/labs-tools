@@ -1,0 +1,55 @@
+{
+  "name": "Labs Tools",
+  "short_name": "LabsTools",
+  "description": "서버 없이 폰 브라우저에서 바로 쓰는 사진 · PDF · 링크 · 영상 유틸리티 8가지",
+  "lang": "ko",
+  "dir": "ltr",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "display_override": ["standalone", "minimal-ui"],
+  "orientation": "portrait",
+  "background_color": "#0a0e14",
+  "theme_color": "#0a0e14",
+  "categories": ["utilities", "photo", "productivity"],
+  "icons": [
+    {
+      "src": "./icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./icons/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "사진 EXIF 제거·모자이크",
+      "short_name": "사진 가리기",
+      "url": "./#/tool/exif",
+      "icons": [{ "src": "./icons/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "URL 추적 제거",
+      "short_name": "링크 정리",
+      "url": "./#/tool/url",
+      "icons": [{ "src": "./icons/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "QR 생성기",
+      "short_name": "QR",
+      "url": "./#/tool/qr",
+      "icons": [{ "src": "./icons/icon-192.png", "sizes": "192x192" }]
+    }
+  ]
+}
