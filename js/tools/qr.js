@@ -197,20 +197,36 @@
       return base + '.' + ext;
     }
 
+    // Encodes the canvas into PNG bytes synchronously. Keeping the whole save
+    // inside the click matters on phones: an async canvas.toBlob() can outlast
+    // the click's user activation, and then the browser drops the download and
+    // the tap looks like nothing happened.
+    function pngBlob(canvas) {
+      var url = canvas.toDataURL('image/png');
+      var comma = url.indexOf(',');
+      if (comma < 0) throw new Error('이미지를 저장할 수 없습니다.');
+      var bin = atob(url.slice(comma + 1));
+      var bytes = new Uint8Array(bin.length);
+      for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      return new Blob([bytes], { type: 'image/png' });
+    }
+
+    // Saving is a plain browser download — the native share sheet is the
+    // separate 공유 button, so tapping 저장 always lands a file in 내려받기.
     pngBtn.addEventListener('click', function () {
       var canvas = $('#qr-canvas', stage);
       if (!canvas) return;
-      U.busy(pngBtn, true, '저장 중');
-      U.canvasToBlob(canvas, 'image/png').then(function (blob) {
-        return U.saveOrShare(blob, fileName('png'), 'QR 코드');
-      }).catch(function (e) {
+      try {
+        U.download(pngBlob(canvas), fileName('png'));
+        U.toast('PNG를 저장했어요');
+      } catch (e) {
         U.toast(e.message || '저장하지 못했어요', 'err');
-      }).then(function () { U.busy(pngBtn, false); });
+      }
     });
 
     svgBtn.addEventListener('click', function () {
       if (!state.svg) return;
-      var blob = new Blob([state.svg], { type: 'image/svg+xml' });
+      var blob = new Blob([state.svg], { type: 'image/svg+xml;charset=utf-8' });
       U.download(blob, fileName('svg'));
       U.toast('SVG를 저장했어요');
     });
@@ -218,15 +234,28 @@
     shareBtn.addEventListener('click', function () {
       var canvas = $('#qr-canvas', stage);
       if (!canvas) return;
-      U.busy(shareBtn, true, '공유 중');
-      U.canvasToBlob(canvas, 'image/png').then(function (blob) {
-        return U.shareBlob(blob, fileName('png'), 'QR 코드').then(function (ok) {
-          if (!ok) { U.download(blob, fileName('png')); U.toast('저장했어요'); }
-        });
+      var blob, name;
+      try {
+        blob = pngBlob(canvas);
+        name = fileName('png');
+      } catch (e) {
+        U.toast(e.message || '이미지를 만들지 못했어요', 'err');
+        return;
+      }
+      // navigator.share only opens while the click is still fresh, so the
+      // bytes are ready before it is called.
+      if (!U.canShareFiles()) {
+        U.download(blob, name);
+        U.toast('PNG를 저장했어요');
+        return;
+      }
+      U.shareBlob(blob, name, 'QR 코드').then(function (shared) {
+        if (!shared) { U.download(blob, name); U.toast('PNG를 저장했어요'); }
       }).catch(function (e) {
-        if (e && e.name === 'AbortError') return;
-        U.toast('공유할 수 없어 저장했어요');
-      }).then(function () { U.busy(shareBtn, false); });
+        if (e && e.name === 'AbortError') return; // user closed the share sheet
+        U.download(blob, name);
+        U.toast('공유를 열지 못해 PNG로 저장했어요');
+      });
     });
 
     U.ensureLib('qrcode').then(function (q) {

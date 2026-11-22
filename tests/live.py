@@ -43,9 +43,36 @@ def main():
         home = page.inner_text("#home")
         check("live home has 8 cards", page.locator(".tool-card").count() == 8)
         check("live home uses plain Korean labels", "서버 전송" in home and "앱처럼 쓰기" in home and "[영상]" in home, home[:120])
-        check("live home shows v1.3.5", "v1.3.5" in home)
+        check("live home shows v1.3.6", "v1.3.6" in home)
         page.add_style_tag(content=".appbar{position:static !important}")
         page.screenshot(path=os.path.join(SHOTS, "live-home.png"), full_page=True)
+
+        page.goto(LIVE + "#/tool/qr")
+        page.wait_for_selector("#qr-text")
+        page.fill("#qr-text", "https://dgnslabs.github.io/labs-tools/")
+        page.wait_for_selector("#qr-canvas")
+        page.evaluate("""() => {
+            Object.defineProperty(navigator, 'canShare', { configurable: true, value: () => true });
+            Object.defineProperty(navigator, 'share', { configurable: true, value: async () => {
+                window.__qrShareCalls = (window.__qrShareCalls || 0) + 1;
+            }});
+        }""")
+        with page.expect_download() as dl:
+            page.click("#qr-png")
+        qpath = os.path.join(SHOTS, "live-qr.png")
+        dl.value.save_as(qpath)
+        qdata = open(qpath, "rb").read()
+        check("live qr png saves to a file with sharing available",
+              len(qdata) > 1000 and qdata[:8] == b"\x89PNG\r\n\x1a\n", str(len(qdata)))
+        check("live qr png save never opens the share sheet", page.evaluate("!window.__qrShareCalls"))
+        with page.expect_download() as dl:
+            page.click("#qr-svg")
+        spath = os.path.join(SHOTS, "live-qr.svg")
+        dl.value.save_as(spath)
+        check("live qr svg saves to a file", open(spath, "r", encoding="utf-8").read().startswith("<svg"))
+        page.evaluate("delete navigator.canShare; delete navigator.share")
+        page.add_style_tag(content=".appbar{position:static !important}.sticky-actions{position:static !important}")
+        page.screenshot(path=os.path.join(SHOTS, "live-tool-qr.png"), full_page=True)
 
         page.goto(LIVE + "#/tool/vod")
         page.wait_for_selector("#vod-drop")
@@ -58,7 +85,7 @@ def main():
             const t = await (await fetch('sw.js', {cache: 'no-store'})).text();
             return (t.match(/labs-tools-app-v[0-9.]+/) || [''])[0];
         }""")
-        check("live sw cache is v1.3.5", swver == "labs-tools-app-v1.3.5", swver)
+        check("live sw cache is v1.3.6", swver == "labs-tools-app-v1.3.6", swver)
 
         # 소리 없는 샘플 → WebCodecs 가속 경로
         page.set_input_files("#vod-file", os.path.join(FIX, "sample-silent.mp4"))

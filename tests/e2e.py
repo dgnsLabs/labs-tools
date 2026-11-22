@@ -12,6 +12,7 @@ drives a mobile-sized Chromium, asserts behaviour and writes screenshots
 to tests/shots/. The server is always stopped at the end.
 """
 import base64
+import errno
 import json
 import os
 import re
@@ -137,7 +138,7 @@ def part_static():
         sw = r.read().decode()
     check("sw precaches app shell", "./index.html" in sw and "./vendor/pdf.min.js" in sw)
     check("sw precaches mp4 muxer", "./vendor/mp4-muxer.mjs" in sw)
-    check("sw cache is v1.3.5", "labs-tools-app-v1.3.5" in sw, sw[:120])
+    check("sw cache is v1.3.6", "labs-tools-app-v1.3.6" in sw, sw[:120])
 
     with urllib.request.urlopen(BASE + "/vendor/qrcode.min.js") as r:
         head = r.read(200).decode("utf-8", "ignore")
@@ -160,7 +161,7 @@ def part_ui(page):
     check("home spec strip is Korean", "도구" in home and "서버 전송" in home and "없음" in home, home[:200])
     check("home has no developer labels",
           not any(w in home for w in ("Offline Utility Suite", "TRANSFER", "INSTALL", "Index", "TOOLS")), home[:200])
-    check("home shows version 1.3.5", "v1.3.5" in home, home[-160:])
+    check("home shows version 1.3.6", "v1.3.6" in home, home[-160:])
     check("card tags are Korean", "[사진]" in home and "[영상]" in home and "[링크]" in home, home[:300])
     check("card tags keep NEW badge", "NEW" in home)
     shot(page, "01-home.png", True)
@@ -240,14 +241,27 @@ def part_qr(page):
     check("qr canvas square", stats["w"] == stats["h"] and stats["w"] > 100, str(stats))
     check("qr has modules", 0.15 < stats["ratio"] < 0.65, str(stats))
 
+    # A phone (Chrome on Android) can share files natively. Saving must still be
+    # a plain browser download there instead of opening the share sheet.
+    page.evaluate("""() => {
+        Object.defineProperty(navigator, 'canShare', { configurable: true, value: () => true });
+        Object.defineProperty(navigator, 'share', { configurable: true, value: async () => {
+            window.__qrShareCalls = (window.__qrShareCalls || 0) + 1;
+        }});
+    }""")
     with page.expect_download() as dl:
         page.click("#qr-png")
+    png_download = dl.value
     path = os.path.join(SHOTS, "qr.png")
-    dl.value.save_as(path)
+    png_download.save_as(path)
     data = open(path, "rb").read()
+    check("png save downloads a file even with native sharing available", len(data) > 0, str(len(data)))
+    check("png save never opens the share sheet", page.evaluate("!window.__qrShareCalls"))
+    check("png download keeps the png name", png_download.suggested_filename.endswith(".png"), png_download.suggested_filename)
     check("qr png signature", data[:8] == b"\x89PNG\r\n\x1a\n", data[:8])
     check("qr png size >1KB", len(data) > 1000, str(len(data)))
     check("qr png ~1024px", 900 <= png_size(data)[0] <= 1024, str(png_size(data)))
+    check("png save tells the user it was saved", "저장했어요" in page.inner_text("#toast"), page.inner_text("#toast"))
     try:
         import cv2
         decoded, _, _ = cv2.QRCodeDetector().detectAndDecode(cv2.imread(path))
@@ -257,10 +271,19 @@ def part_qr(page):
 
     with page.expect_download() as dl:
         page.click("#qr-svg")
+    svg_download = dl.value
     path = os.path.join(SHOTS, "qr.svg")
-    dl.value.save_as(path)
+    svg_download.save_as(path)
     svg = open(path, "r", encoding="utf-8").read()
+    check("svg save downloads a file even with native sharing available", len(svg) > 0, str(len(svg)))
+    check("svg save never opens the share sheet", page.evaluate("!window.__qrShareCalls"))
+    check("svg download keeps the svg name", svg_download.suggested_filename.endswith(".svg"), svg_download.suggested_filename)
     check("qr svg valid", svg.startswith("<svg") and "<rect" in svg and 'viewBox="0 0 ' in svg, svg[:80])
+
+    # 공유 stays the one place that opens the native sheet.
+    page.click("#qr-share")
+    page.wait_for_function("window.__qrShareCalls === 1")
+    check("share button still opens the native share sheet", page.evaluate("window.__qrShareCalls === 1"))
 
     # wifi mode
     page.click('#qr-mode button[data-mode="wifi"]')
@@ -276,12 +299,23 @@ def part_qr(page):
         page.click("#qr-png")
     wpath = os.path.join(SHOTS, "wifi-qr.png")
     dl.value.save_as(wpath)
+    check("wifi png save downloads without sharing",
+          os.path.getsize(wpath) > 0 and page.evaluate("window.__qrShareCalls === 1"),
+          str(os.path.getsize(wpath)))
     try:
         import cv2
         wdecoded, _, _ = cv2.QRCodeDetector().detectAndDecode(cv2.imread(wpath))
         check("wifi qr decodes", wdecoded.startswith("WIFI:T:WPA;S:HomeNet") and "P:pass" in wdecoded, repr(wdecoded))
     except ImportError:
         pass
+
+    # Without native sharing the 공유 button falls back to a download.
+    page.evaluate("Object.defineProperty(navigator, 'canShare', { configurable: true, value: () => false })")
+    with page.expect_download() as dl:
+        page.click("#qr-share")
+    check("share falls back to a download when sharing is unavailable",
+          dl.value.suggested_filename.endswith(".png"), dl.value.suggested_filename)
+    page.evaluate("delete navigator.canShare; delete navigator.share")
     shot(page, "03-qr.png", True)
 
 
@@ -752,18 +786,25 @@ def part_vod(page):
         assert atom_size >= 8
         offset += atom_size
     free_size = 4 * 1024**3
-    with tempfile.TemporaryDirectory() as directory:
-        large = os.path.join(directory, "large.mp4")
-        with open(large, "wb") as f:
-            f.write(original[:offset])
-            f.write(struct.pack(">I4sQ", 1, b"free", free_size))
-            f.seek(offset + free_size)
-            f.write(original[offset:])
-        page.set_input_files("#vod-file", large)
-        page.click("#vod-go")
-        page.wait_for_selector("#vod-result .vod-verdict", timeout=90000)
-        check("input over 4 GiB converts", "업로드 규격 통과" in page.inner_text("#vod-result .vod-verdict"))
-        check("large input uses FFmpeg", page.get_attribute("#tool-vod", "data-engine") == "ffmpeg")
+    try:
+        with tempfile.TemporaryDirectory() as directory:
+            large = os.path.join(directory, "large.mp4")
+            with open(large, "wb") as f:
+                f.write(original[:offset])
+                f.write(struct.pack(">I4sQ", 1, b"free", free_size))
+                f.seek(offset + free_size)
+                f.write(original[offset:])
+            page.set_input_files("#vod-file", large)
+            page.click("#vod-go")
+            page.wait_for_selector("#vod-result .vod-verdict", timeout=90000)
+            check("input over 4 GiB converts", "업로드 규격 통과" in page.inner_text("#vod-result .vod-verdict"))
+            check("large input uses FFmpeg", page.get_attribute("#tool-vod", "data-engine") == "ffmpeg")
+    except OSError as error:
+        # tmpfs / some FUSE mounts refuse a file this large; the check still runs
+        # wherever the filesystem holds it.
+        if error.errno not in (errno.EFBIG, errno.ENOSPC):
+            raise
+        print(f"  (skipped >4 GiB fixture — filesystem refuses the file: {error})")
 
     # A very compact audio track beats the fixed output audio budget by itself.
     compact = make_vod_sample(page, True, compact=True)
