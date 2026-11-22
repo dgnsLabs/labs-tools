@@ -97,6 +97,66 @@ def part_save_buttons(page):
     check("live resize save never opens the share sheet", page.evaluate("!window.__shareCalls"))
     clear_sharing(page)
 
+    # 확대·이동·두 손가락 확대·2배 해상도
+    live_zoom = """() => {
+        const c = document.querySelector('#rs-canvas');
+        const px = c.getContext('2d').getImageData(2, 2, 1, 1).data;
+        return {w: c.dataset.w, h: c.dataset.h, zoom: c.dataset.zoom, panx: c.dataset.panX,
+                slider: document.querySelector('#rs-zoom').value, max: document.querySelector('#rs-zoom').max,
+                label: document.querySelector('#rs-zoom-val').textContent, corner: [px[0], px[1], px[2]]};
+    }"""
+    lz0 = page.evaluate(live_zoom)
+    check("live resize starts at 100%", lz0["zoom"] == "100" and lz0["label"] == "100%", str(lz0))
+    check("live resize zoom goes to 300%", lz0["max"] == "300", lz0["max"])
+    page.evaluate("""() => {
+        const s = document.querySelector('#rs-zoom');
+        s.value = '200';
+        s.dispatchEvent(new Event('input', { bubbles: true }));
+    }""")
+    page.wait_for_timeout(300)
+    lz1 = page.evaluate(live_zoom)
+    check("live slider zooms to 200%", lz1["zoom"] == "200" and lz1["label"] == "200%", str(lz1["zoom"]))
+    check("live zoom fills the frame", lz1["corner"] != [255, 255, 255], str(lz1["corner"]))
+
+    page.locator("#rs-stage").scroll_into_view_if_needed()
+    page.wait_for_timeout(200)
+    page.evaluate("""() => {
+        const c = document.querySelector('#rs-canvas');
+        const r = c.getBoundingClientRect();
+        const stage = document.querySelector('#rs-stage');
+        window.__pt = { cx: r.left + r.width / 2, cy: r.top + r.height / 2 };
+        window.__fire = (type, id, x, y) => stage.dispatchEvent(new PointerEvent(type, {
+            pointerId: id, pointerType: 'touch', clientX: x, clientY: y, bubbles: true, cancelable: true,
+        }));
+    }""")
+    page.evaluate("() => { const p = window.__pt; window.__fire('pointerdown', 21, p.cx - 40, p.cy); window.__fire('pointerdown', 22, p.cx + 40, p.cy); }")
+    page.wait_for_timeout(120)
+    page.evaluate("() => { const p = window.__pt; window.__fire('pointermove', 22, p.cx + 80, p.cy); }")
+    page.wait_for_timeout(400)
+    lz2 = page.evaluate(live_zoom)
+    check("live two-finger zoom changes the preview", lz2["zoom"].isdigit() and int(lz2["zoom"]) > 200, str(lz2["zoom"]))
+    page.evaluate("() => { const p = window.__pt; window.__fire('pointerup', 21, p.cx - 40, p.cy); window.__fire('pointerup', 22, p.cx + 80, p.cy); }")
+    page.wait_for_timeout(150)
+
+    page.click("#rs-cover")
+    page.wait_for_timeout(300)
+    lz3 = page.evaluate(live_zoom)
+    check("live 꽉 채우기 uses the cover scale", lz3["zoom"] == "150", str(lz3["zoom"]))
+    page.add_style_tag(content=".appbar{position:static !important}.sticky-actions{position:static !important}")
+    page.screenshot(path=os.path.join(SHOTS, "live-tool-resize.png"), full_page=True)
+
+    page.click("#rs-fit")
+    page.wait_for_timeout(250)
+    page.select_option("#rs-size", "2")
+    page.wait_for_timeout(600)
+    lz4 = page.evaluate(live_zoom)
+    check("live 2배 확대 outputs 2160x2160", [lz4["w"], lz4["h"]] == ["2160", "2160"], str([lz4["w"], lz4["h"]]))
+    with page.expect_download(timeout=120000) as dl:
+        page.click("#rs-png")
+    upath = os.path.join(SHOTS, "live-resize-2x.png")
+    dl.value.save_as(upath)
+    check("live 2배 확대 png downloads", open(upath, "rb").read()[:8] == b"\x89PNG\r\n\x1a\n")
+
     page.goto(LIVE + "#/tool/watermark")
     page.wait_for_selector("#wm-file", state="attached")
     page.set_input_files("#wm-file", os.path.join(FIX, "photo2.jpg"))
