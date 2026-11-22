@@ -119,6 +119,26 @@ def png_size(data):
     return Image.open(io.BytesIO(data)).size
 
 
+def pinch(page, cx, cy, start_gap, end_gap, steps=8):
+    """Two-finger pinch at (cx, cy) in viewport CSS pixels, using real touch events."""
+    client = page.context.new_cdp_session(page)
+
+    def points(gap):
+        return [
+            {"x": cx - gap / 2, "y": cy, "id": 1, "radiusX": 4, "radiusY": 4, "force": 0.6},
+            {"x": cx + gap / 2, "y": cy, "id": 2, "radiusX": 4, "radiusY": 4, "force": 0.6},
+        ]
+
+    try:
+        client.send("Input.dispatchTouchEvent", {"type": "touchStart", "touchPoints": points(start_gap)})
+        for i in range(1, steps + 1):
+            gap = start_gap + (end_gap - start_gap) * i / steps
+            client.send("Input.dispatchTouchEvent", {"type": "touchMove", "touchPoints": points(gap)})
+        client.send("Input.dispatchTouchEvent", {"type": "touchEnd", "touchPoints": []})
+    finally:
+        client.detach()
+
+
 def attach(page):
     page.on("pageerror", lambda e: ERRORS.append(f"pageerror: {e}"))
     page.on("console", lambda m: ERRORS.append(f"console: {m.text}") if m.type == "error" else None)
@@ -159,7 +179,7 @@ def part_static():
         sw = r.read().decode()
     check("sw precaches app shell", "./index.html" in sw and "./vendor/pdf.min.js" in sw)
     check("sw precaches mp4 muxer", "./vendor/mp4-muxer.mjs" in sw)
-    check("sw cache is v1.3.7", "labs-tools-app-v1.3.7" in sw, sw[:120])
+    check("sw cache is v1.3.8", "labs-tools-app-v1.3.8" in sw, sw[:120])
 
     with urllib.request.urlopen(BASE + "/vendor/qrcode.min.js") as r:
         head = r.read(200).decode("utf-8", "ignore")
@@ -182,7 +202,7 @@ def part_ui(page):
     check("home spec strip is Korean", "도구" in home and "서버 전송" in home and "없음" in home, home[:200])
     check("home has no developer labels",
           not any(w in home for w in ("Offline Utility Suite", "TRANSFER", "INSTALL", "Index", "TOOLS")), home[:200])
-    check("home shows version 1.3.7", "v1.3.7" in home, home[-160:])
+    check("home shows version 1.3.8", "v1.3.8" in home, home[-160:])
     check("card tags are Korean", "[사진]" in home and "[영상]" in home and "[링크]" in home, home[:300])
     check("card tags keep NEW badge", "NEW" in home)
     shot(page, "01-home.png", True)
@@ -618,6 +638,144 @@ def part_resize(page):
     page.wait_for_timeout(120)
     dims2 = page.evaluate("() => { const c=document.querySelector('#rs-canvas'); return [c.dataset.w, c.dataset.h]; }")
     check("1:1 canvas 1080x1080", dims2 == ["1080", "1080"], str(dims2))
+
+    # ---------------------------------------------------------- 확대·위치 조절
+    def zoom_state():
+        return page.evaluate("""() => {
+            const c = document.querySelector('#rs-canvas');
+            const s = document.querySelector('#rs-zoom');
+            const px = c.getContext('2d').getImageData(2, 2, 1, 1).data;
+            return {
+                w: c.dataset.w, h: c.dataset.h, zoom: c.dataset.zoom,
+                slider: s.value, max: s.max, label: document.querySelector('#rs-zoom-val').textContent,
+                panx: c.dataset.panX, pany: c.dataset.panY,
+                corner: [px[0], px[1], px[2]],
+            };
+        }""")
+
+    z0 = zoom_state()
+    check("zoom starts at 100%", z0["zoom"] == "100" and z0["slider"] == "100" and z0["label"] == "100%", str(z0))
+    check("zoom slider spans 100-300%", (z0["max"], page.evaluate("() => document.querySelector('#rs-zoom').min")) == ("300", "100"), z0["max"])
+    check("100% keeps the white padding", z0["corner"] == [255, 255, 255], str(z0["corner"]))
+    size_labels = page.eval_on_selector_all("#rs-size option", "els => els.map(e => e.textContent)")
+    check("2x output resolution option exists", "2배 확대 (2×)" in size_labels, str(size_labels))
+
+    page.evaluate("""() => {
+        const s = document.querySelector('#rs-zoom');
+        s.value = '200';
+        s.dispatchEvent(new Event('input', { bubbles: true }));
+    }""")
+    page.wait_for_timeout(250)
+    z1 = zoom_state()
+    check("slider zooms to 200%", z1["zoom"] == "200" and z1["label"] == "200%", str([z1["zoom"], z1["label"]]))
+    check("zooming keeps the output size", [z1["w"], z1["h"]] == ["1080", "1080"], str([z1["w"], z1["h"]]))
+    check("200% zoom fills the frame edge to edge", z1["corner"] != [255, 255, 255], str(z1["corner"]))
+    shot(page, "08b-resize-zoom.png", True)
+
+    page.locator("#rs-stage").scroll_into_view_if_needed()
+    page.wait_for_timeout(150)
+    box = page.locator("#rs-stage").bounding_box()
+    mvx, mvy = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
+    page.mouse.move(mvx, mvy)
+    page.mouse.down()
+    page.mouse.move(mvx - 60, mvy, steps=5)
+    page.mouse.up()
+    page.wait_for_timeout(200)
+    z2 = zoom_state()
+    check("drag pans the zoomed photo", float(z2["panx"]) <= -0.05, str(z2["panx"]))
+
+    for _ in range(4):
+        page.mouse.move(mvx, mvy)
+        page.mouse.down()
+        page.mouse.move(mvx - 200, mvy, steps=4)
+        page.mouse.up()
+    page.wait_for_timeout(200)
+    z3 = zoom_state()
+    check("pan stops at the photo edge", z3["panx"] == "-1.000", str(z3["panx"]))
+    check("no blank strip at the panned edge", z3["corner"] != [255, 255, 255], str(z3["corner"]))
+
+    page.click("#rs-cover")
+    page.wait_for_timeout(250)
+    z4 = zoom_state()
+    check("꽉 채우기 uses the cover scale", z4["zoom"] == "150", str(z4["zoom"]))
+    check("꽉 채우기 recentres the photo", [z4["panx"], z4["pany"]] == ["0.000", "0.000"], str([z4["panx"], z4["pany"]]))
+    check("꽉 채우기 leaves no padding", z4["corner"] != [255, 255, 255], str(z4["corner"]))
+
+    page.click("#rs-fit")
+    page.wait_for_timeout(250)
+    z5 = zoom_state()
+    check("전체 맞춤 returns to 100%", z5["zoom"] == "100" and z5["slider"] == "100", str(z5["zoom"]))
+    check("전체 맞춤 recentres the photo", [z5["panx"], z5["pany"]] == ["0.000", "0.000"], str([z5["panx"], z5["pany"]]))
+    check("전체 맞춤 brings the padding back", z5["corner"] == [255, 255, 255], str(z5["corner"]))
+
+    # ---------------------------------------------------------- 두 손가락 확대/축소
+    page.locator("#rs-stage").scroll_into_view_if_needed()
+    page.wait_for_timeout(150)
+    box = page.locator("#rs-stage").bounding_box()
+    cx, cy = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
+    pinch(page, cx, cy, 80, 180)
+    page.wait_for_timeout(300)
+    z6 = zoom_state()
+    check("pinch out zooms in", z6["zoom"].isdigit() and int(z6["zoom"]) >= 180, str(z6["zoom"]))
+    check("pinch keeps the slider and label in sync",
+          z6["slider"] == z6["zoom"] and z6["label"] == z6["zoom"] + "%", str([z6["slider"], z6["label"]]) + " vs " + str(z6["zoom"]))
+    check("pinch redraws the preview", z6["corner"] != [255, 255, 255], str(z6["corner"]))
+    shot(page, "08c-resize-pinch.png", True)
+
+    pinch(page, cx, cy, 180, 80)
+    page.wait_for_timeout(300)
+    z7 = zoom_state()
+    check("pinch in zooms back out", z7["zoom"].isdigit() and int(z7["zoom"]) <= 120, str(z7["zoom"]))
+
+    # 두 손가락 중 하나만 떼어도 화면이 튀지 않고, 남은 손가락 이동이 그대로 이어진다.
+    page.evaluate("""() => {
+        const c = document.querySelector('#rs-canvas');
+        const r = c.getBoundingClientRect();
+        const stage = document.querySelector('#rs-stage');
+        window.__pt = { cx: r.left + r.width / 2, cy: r.top + r.height / 2 };
+        window.__fire = (type, id, x, y) => stage.dispatchEvent(new PointerEvent(type, {
+            pointerId: id, pointerType: 'touch', clientX: x, clientY: y, bubbles: true, cancelable: true,
+        }));
+    }""")
+    page.evaluate("() => { const p = window.__pt; window.__fire('pointerdown', 21, p.cx - 40, p.cy); window.__fire('pointerdown', 22, p.cx + 40, p.cy); }")
+    page.wait_for_timeout(100)
+    page.evaluate("() => { const p = window.__pt; window.__fire('pointermove', 22, p.cx + 90, p.cy); }")
+    page.wait_for_timeout(300)
+    synth_zoom = page.evaluate("() => document.querySelector('#rs-canvas').dataset.zoom")
+    check("two fingers zoom the preview", synth_zoom.isdigit() and int(synth_zoom) > 100, str(synth_zoom))
+
+    page.evaluate("() => { const p = window.__pt; window.__fire('pointerup', 21, p.cx - 40, p.cy); }")
+    page.wait_for_timeout(150)
+    pan_a = page.evaluate("() => document.querySelector('#rs-canvas').dataset.panX")
+    page.evaluate("() => { const p = window.__pt; window.__fire('pointermove', 22, p.cx + 92, p.cy); }")
+    page.wait_for_timeout(300)
+    pan_b = page.evaluate("() => document.querySelector('#rs-canvas').dataset.panX")
+    page.evaluate("() => { const p = window.__pt; window.__fire('pointerup', 22, p.cx + 92, p.cy); }")
+    page.wait_for_timeout(100)
+    check("lifting one finger does not jump the photo",
+          abs(float(pan_b) - float(pan_a)) < 0.2, f"pan {pan_a} -> {pan_b}")
+
+    # ---------------------------------------------------------- 출력 해상도 2배
+    page.click("#rs-fit")
+    page.select_option("#rs-size", "2")
+    page.wait_for_timeout(500)
+    z8 = zoom_state()
+    check("2배 확대 outputs 2160x2160", [z8["w"], z8["h"]] == ["2160", "2160"], str([z8["w"], z8["h"]]))
+    check("2배 확대 keeps zoom at 100%", z8["zoom"] == "100", str(z8["zoom"]))
+
+    with page.expect_download(timeout=120000) as dl:
+        page.click("#rs-png")
+    upath = os.path.join(SHOTS, "resized-2x.png")
+    dl.value.save_as(upath)
+    udata = open(upath, "rb").read()
+    check("2배 확대 png really is 2160x2160", png_size(udata) == (2160, 2160), str(png_size(udata)))
+
+    with page.expect_download(timeout=120000) as dl:
+        page.click("#rs-jpg")
+    ujpg = os.path.join(SHOTS, "resized-2x.jpg")
+    dl.value.save_as(ujpg)
+    check("2배 확대 jpg downloads", open(ujpg, "rb").read()[:2] == b"\xff\xd8")
+    check("2배 확대 jpg keeps 2160x2160", Image.open(ujpg).size == (2160, 2160), str(Image.open(ujpg).size))
 
 
 # ---------------------------------------------------------------- watermark

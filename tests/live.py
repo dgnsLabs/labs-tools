@@ -144,7 +144,7 @@ def main(argv=None):
         home = page.inner_text("#home")
         check("live home has 8 cards", page.locator(".tool-card").count() == 8)
         check("live home uses plain Korean labels", "서버 전송" in home and "앱처럼 쓰기" in home and "[영상]" in home, home[:120])
-        check("live home shows v1.3.7", "v1.3.7" in home)
+        check("live home shows v1.3.8", "v1.3.8" in home)
         page.add_style_tag(content=".appbar{position:static !important}")
         page.screenshot(path=os.path.join(SHOTS, "live-home.png"), full_page=True)
 
@@ -191,7 +191,7 @@ def main(argv=None):
             const t = await (await fetch('sw.js', {cache: 'no-store'})).text();
             return (t.match(/labs-tools-app-v[0-9.]+/) || [''])[0];
         }""")
-        check("live sw cache is v1.3.7", swver == "labs-tools-app-v1.3.7", swver)
+        check("live sw cache is v1.3.8", swver == "labs-tools-app-v1.3.8", swver)
 
         # 소리 없는 샘플 → WebCodecs 가속 경로
         page.set_input_files("#vod-file", os.path.join(FIX, "sample-silent.mp4"))
