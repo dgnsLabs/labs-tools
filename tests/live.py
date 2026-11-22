@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Labs Tools — GitHub Pages 라이브 검증.
 
-python3 tests/live.py
+python3 tests/live.py         # 전체 (홈·QR·VOD 변환)
+python3 tests/live.py saves   # 저장 버튼 5종만 빠르게
 
 배포된 https://dgnslabs.github.io/labs-tools/ 를 열어 홈 라벨·버전, VOD 화면,
 WebCodecs 실제 변환과 ffmpeg 폴백 경로를 확인하고 tests/shots/live-*.png 를 남깁니다.
@@ -28,7 +29,107 @@ def check(name, cond, detail=""):
     print(("  ✓ " if cond else "  ✗ ") + name + ("" if cond else f" — {detail}"))
 
 
-def main():
+def stub_android_sharing(page):
+    """Android Chrome can share files. Saving must download anyway."""
+    page.evaluate("""() => {
+        window.__shareCalls = 0;
+        Object.defineProperty(navigator, 'canShare', { configurable: true, value: () => true });
+        Object.defineProperty(navigator, 'share', { configurable: true, value: async () => {
+            window.__shareCalls = window.__shareCalls + 1;
+        }});
+    }""")
+
+
+def clear_sharing(page):
+    page.evaluate("() => { delete navigator.canShare; delete navigator.share; }")
+
+
+def part_save_buttons(page):
+    """Every tool's 저장 button lands a file, share sheet or not."""
+    print("\n[saves] 저장 buttons download on the live site")
+    page.goto(LIVE + "#/tool/exif")
+    page.wait_for_selector("#ex-file", state="attached")
+    helpers = page.evaluate("() => ({sync: typeof Labs.util.canvasBlobSync, legacy: typeof Labs.util.saveOrShare})")
+    check("live build has the sync canvas encoder", helpers["sync"] == "function", str(helpers))
+    check("live build has no share-on-save helper", helpers["legacy"] == "undefined", str(helpers))
+    page.set_input_files("#ex-file", os.path.join(FIX, "photo-exif.jpg"))
+    page.wait_for_selector("#exif-canvas")
+    stub_android_sharing(page)
+    with page.expect_download() as dl:
+        page.click("#ex-jpg")
+    spath = os.path.join(SHOTS, "live-save-exif.jpg")
+    dl.value.save_as(spath)
+    check("live exif save downloads a file", os.path.getsize(spath) > 0, str(os.path.getsize(spath)))
+    check("live exif save never opens the share sheet", page.evaluate("!window.__shareCalls"))
+    with page.expect_download() as dl:
+        page.click("#ex-png")
+    check("live exif png save downloads a file", dl.value.suggested_filename.endswith(".png"),
+          dl.value.suggested_filename)
+    check("live exif png save never opens the share sheet", page.evaluate("!window.__shareCalls"))
+    page.click("#ex-share")
+    page.wait_for_function("window.__shareCalls === 1")
+    check("live exif share still opens the sheet", page.evaluate("window.__shareCalls === 1"))
+    clear_sharing(page)
+
+    page.goto(LIVE + "#/tool/compress")
+    page.wait_for_selector("#cz-file", state="attached")
+    page.set_input_files("#cz-file", os.path.join(FIX, "photo2.jpg"))
+    page.wait_for_function("document.querySelectorAll('#cz-results [data-save]').length === 1", timeout=120000)
+    stub_android_sharing(page)
+    with page.expect_download() as dl:
+        page.locator("#cz-results [data-save]").first.click()
+    cpath = os.path.join(SHOTS, "live-save-compress.jpg")
+    dl.value.save_as(cpath)
+    check("live compress save downloads a file", os.path.getsize(cpath) > 0, str(os.path.getsize(cpath)))
+    check("live compress save never opens the share sheet", page.evaluate("!window.__shareCalls"))
+    clear_sharing(page)
+
+    page.goto(LIVE + "#/tool/resize")
+    page.wait_for_selector("#rs-file", state="attached")
+    page.set_input_files("#rs-file", os.path.join(FIX, "photo2.jpg"))
+    page.wait_for_selector("#rs-canvas")
+    stub_android_sharing(page)
+    with page.expect_download() as dl:
+        page.click("#rs-png")
+    rpath = os.path.join(SHOTS, "live-save-resize.png")
+    dl.value.save_as(rpath)
+    check("live resize save downloads a file", os.path.getsize(rpath) > 0, str(os.path.getsize(rpath)))
+    check("live resize save never opens the share sheet", page.evaluate("!window.__shareCalls"))
+    clear_sharing(page)
+
+    page.goto(LIVE + "#/tool/watermark")
+    page.wait_for_selector("#wm-file", state="attached")
+    page.set_input_files("#wm-file", os.path.join(FIX, "photo2.jpg"))
+    page.wait_for_function("document.querySelectorAll('#wm-results [data-save]').length === 1", timeout=60000)
+    page.fill("#wm-text", "© @wdh")
+    page.wait_for_timeout(300)
+    stub_android_sharing(page)
+    with page.expect_download() as dl:
+        page.locator("#wm-results [data-save]").first.click()
+    wpath = os.path.join(SHOTS, "live-save-watermark.jpg")
+    dl.value.save_as(wpath)
+    check("live watermark save downloads a file", os.path.getsize(wpath) > 0, str(os.path.getsize(wpath)))
+    check("live watermark save never opens the share sheet", page.evaluate("!window.__shareCalls"))
+    clear_sharing(page)
+
+    page.goto(LIVE + "#/tool/pdf")
+    page.wait_for_selector("#pdf-file", state="attached")
+    page.set_input_files("#pdf-file", os.path.join(FIX, "doc.pdf"))
+    page.wait_for_function("document.querySelectorAll('.thumb-card').length === 2", timeout=120000)
+    stub_android_sharing(page)
+    with page.expect_download() as dl:
+        page.locator("[data-dl]").first.click()
+    ppath = os.path.join(SHOTS, "live-save-pdf.png")
+    dl.value.save_as(ppath)
+    check("live pdf save downloads a file", os.path.getsize(ppath) > 0, str(os.path.getsize(ppath)))
+    check("live pdf save never opens the share sheet", page.evaluate("!window.__shareCalls"))
+    clear_sharing(page)
+
+
+def main(argv=None):
+    argv = argv or []
+    saves_only = "saves" in argv
+
     with sync_playwright() as p:
         browser = p.chromium.launch(args=["--no-sandbox"])
         ctx = browser.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=2,
@@ -46,6 +147,11 @@ def main():
         check("live home shows v1.3.7", "v1.3.7" in home)
         page.add_style_tag(content=".appbar{position:static !important}")
         page.screenshot(path=os.path.join(SHOTS, "live-home.png"), full_page=True)
+
+        if saves_only:
+            part_save_buttons(page)
+            browser.close()
+            return finish()
 
         page.goto(LIVE + "#/tool/qr")
         page.wait_for_selector("#qr-text")
@@ -148,6 +254,10 @@ def main():
 
         browser.close()
 
+    return finish()
+
+
+def finish():
     print("\nchecks:", sum(1 for _, ok in CHECKS if ok), "/", len(CHECKS))
     if ERRORS:
         print("console/page errors:")
@@ -159,4 +269,4 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(main(sys.argv[1:]))
