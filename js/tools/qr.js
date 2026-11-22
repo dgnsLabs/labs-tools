@@ -197,27 +197,13 @@
       return base + '.' + ext;
     }
 
-    // Encodes the canvas into PNG bytes synchronously. Keeping the whole save
-    // inside the click matters on phones: an async canvas.toBlob() can outlast
-    // the click's user activation, and then the browser drops the download and
-    // the tap looks like nothing happened.
-    function pngBlob(canvas) {
-      var url = canvas.toDataURL('image/png');
-      var comma = url.indexOf(',');
-      if (comma < 0) throw new Error('이미지를 저장할 수 없습니다.');
-      var bin = atob(url.slice(comma + 1));
-      var bytes = new Uint8Array(bin.length);
-      for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-      return new Blob([bytes], { type: 'image/png' });
-    }
-
     // Saving is a plain browser download — the native share sheet is the
     // separate 공유 button, so tapping 저장 always lands a file in 내려받기.
     pngBtn.addEventListener('click', function () {
       var canvas = $('#qr-canvas', stage);
       if (!canvas) return;
       try {
-        U.download(pngBlob(canvas), fileName('png'));
+        U.download(U.canvasBlobSync(canvas, 'image/png'), fileName('png'));
         U.toast('PNG를 저장했어요');
       } catch (e) {
         U.toast(e.message || '저장하지 못했어요', 'err');
@@ -236,7 +222,7 @@
       if (!canvas) return;
       var blob, name;
       try {
-        blob = pngBlob(canvas);
+        blob = U.canvasBlobSync(canvas, 'image/png');
         name = fileName('png');
       } catch (e) {
         U.toast(e.message || '이미지를 만들지 못했어요', 'err');

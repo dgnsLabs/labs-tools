@@ -174,19 +174,22 @@
       draw();
     });
 
-    function save(type, btn) {
+    // Saving is a plain download.
+    function save(type) {
       if (!state.previewCanvas) return;
-      U.busy(btn, true, '저장 중');
       var mime = type === 'png' ? 'image/png' : 'image/jpeg';
-      U.canvasToBlob(state.previewCanvas, mime, 0.92).then(function (blob) {
-        var name = 'resize-' + state.ratio.id.replace(':', 'x') + '-' + U.stamp() + '.' + (type === 'png' ? 'png' : 'jpg');
-        return U.saveOrShare(blob, name, '비율 리사이즈');
-      }).catch(function (e) { U.toast(e.message || '저장하지 못했어요', 'err'); })
-        .then(function () { U.busy(btn, false); });
+      var name = 'resize-' + state.ratio.id.replace(':', 'x') + '-' + U.stamp() + '.' + (type === 'png' ? 'png' : 'jpg');
+      try {
+        var blob = U.canvasBlobSync(state.previewCanvas, mime, 0.92);
+        U.download(blob, name);
+        U.toast('저장했어요 · ' + U.bytes(blob.size));
+      } catch (e) {
+        U.toast(e.message || '저장하지 못했어요', 'err');
+      }
     }
 
-    pngBtn.addEventListener('click', function () { save('png', pngBtn); });
-    jpgBtn.addEventListener('click', function () { save('jpg', jpgBtn); });
+    pngBtn.addEventListener('click', function () { save('png'); });
+    jpgBtn.addEventListener('click', function () { save('jpg'); });
 
     // default label
     var d = PRESETS[0].w + '×' + PRESETS[0].h;

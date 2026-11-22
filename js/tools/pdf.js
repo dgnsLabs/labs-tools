@@ -176,7 +176,8 @@
           var num = parseInt(b.getAttribute('data-dl'), 10);
           var pg = pdfState.pages.filter(function (x) { return x.page === num; })[0];
           if (!pg) return;
-          U.saveOrShare(pg.blob, pdfState.name + '-p' + String(num).padStart(2, '0') + (pg.blob.type === 'image/jpeg' ? '.jpg' : '.png'), 'PDF 페이지');
+          U.download(pg.blob, pdfState.name + '-p' + String(num).padStart(2, '0') + (pg.blob.type === 'image/jpeg' ? '.jpg' : '.png'));
+          U.toast('저장했어요 · ' + U.bytes(pg.blob.size));
         });
       });
 

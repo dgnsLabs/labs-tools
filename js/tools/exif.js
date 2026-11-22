@@ -286,34 +286,45 @@
     });
 
     /* ---------------- export ---------------- */
-    function save(type, btn) {
+    // Saving is a plain download — the share sheet is the separate 공유 button.
+    function save(type) {
       if (!state.out) return;
-      U.busy(btn, true, '저장 중');
       var mime = type === 'png' ? 'image/png' : 'image/jpeg';
-      U.canvasToBlob(state.out, mime, 0.92).then(function (blob) {
-        var name = state.name + '-masked.' + (type === 'png' ? 'png' : 'jpg');
-        U.toast('EXIF 없이 저장 · ' + U.bytes(blob.size));
-        return U.saveOrShare(blob, name, '사진 저장');
-      }).catch(function (e) {
+      var name = state.name + '-masked.' + (type === 'png' ? 'png' : 'jpg');
+      try {
+        var blob = U.canvasBlobSync(state.out, mime, 0.92);
+        U.download(blob, name);
+        U.toast('저장했어요 · ' + U.bytes(blob.size));
+      } catch (e) {
         U.toast(e.message || '저장하지 못했어요', 'err');
-      }).then(function () { U.busy(btn, false); });
+      }
     }
 
-    $('#ex-png', root).addEventListener('click', function () { save('png', $('#ex-png', root)); });
-    $('#ex-jpg', root).addEventListener('click', function () { save('jpg', $('#ex-jpg', root)); });
+    $('#ex-png', root).addEventListener('click', function () { save('png'); });
+    $('#ex-jpg', root).addEventListener('click', function () { save('jpg'); });
 
     $('#ex-share', root).addEventListener('click', function () {
       if (!state.out) return;
-      var btn = $('#ex-share', root);
-      U.busy(btn, true, '공유 중');
-      U.canvasToBlob(state.out, 'image/jpeg', 0.92).then(function (blob) {
-        return U.shareBlob(blob, state.name + '-masked.jpg', '사진 공유').then(function (ok) {
-          if (!ok) { U.download(blob, state.name + '-masked.jpg'); U.toast('저장했어요'); }
-        });
+      var blob, name;
+      try {
+        blob = U.canvasBlobSync(state.out, 'image/jpeg', 0.92);
+        name = state.name + '-masked.jpg';
+      } catch (e) {
+        U.toast(e.message || '이미지를 만들지 못했어요', 'err');
+        return;
+      }
+      // navigator.share only opens while the tap is still fresh.
+      if (!U.canShareFiles()) {
+        U.download(blob, name);
+        U.toast('저장했어요');
+        return;
+      }
+      U.shareBlob(blob, name, '사진 공유').then(function (ok) {
+        if (!ok) { U.download(blob, name); U.toast('저장했어요'); }
       }).catch(function (e) {
-        if (e && e.name === 'AbortError') return;
-        U.toast('공유할 수 없어 저장했어요');
-      }).then(function () { U.busy(btn, false); });
+        if (e && e.name === 'AbortError') return; // user closed the share sheet
+        U.toast('공유를 열지 못했어요. 저장 버튼을 눌러 주세요.');
+      });
     });
   }
 

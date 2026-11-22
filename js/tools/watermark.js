@@ -267,13 +267,16 @@
           var id = parseInt(b.getAttribute('data-save'), 10);
           var it = state.items.filter(function (x) { return x.id === id; })[0];
           if (!it) return;
-          U.busy(b, true, '');
-          var canvas = compose(it, MAX_DIM);
-          var mime = state.format === 'png' ? 'image/png' : 'image/jpeg';
-          U.canvasToBlob(canvas, mime, 0.92).then(function (blob) {
-            return U.saveOrShare(blob, U.baseName(it.name) + '-wm.' + (state.format === 'png' ? 'png' : 'jpg'), '워터마크');
-          }).catch(function (e) { U.toast(e.message || '저장하지 못했어요', 'err'); })
-            .then(function () { U.busy(b, false); });
+          // Encode inside the tap so the download is not dropped on phones.
+          try {
+            var canvas = compose(it, MAX_DIM);
+            var mime = state.format === 'png' ? 'image/png' : 'image/jpeg';
+            var blob = U.canvasBlobSync(canvas, mime, 0.92);
+            U.download(blob, U.baseName(it.name) + '-wm.' + (state.format === 'png' ? 'png' : 'jpg'));
+            U.toast('저장했어요 · ' + U.bytes(blob.size));
+          } catch (e) {
+            U.toast(e.message || '저장하지 못했어요', 'err');
+          }
         });
       });
 

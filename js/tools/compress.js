@@ -273,8 +273,10 @@
           var id = parseInt(b.getAttribute('data-save'), 10);
           var it = state.items.filter(function (x) { return x.id === id; })[0];
           if (!it || !it.out) return;
+          // Blob is ready in memory — hand it straight to the download.
           var name = U.baseName(it.name) + '-min.' + typeExt(it.out.type);
-          U.saveOrShare(it.out.blob, name, it.name);
+          U.download(it.out.blob, name);
+          U.toast('저장했어요 · ' + U.bytes(it.out.blob.size));
         });
       });
       var zipBtn = $('#cz-zip', results);

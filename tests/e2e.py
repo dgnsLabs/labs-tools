@@ -49,6 +49,27 @@ def check(name, cond, detail=""):
         FAILS.append(f"{name} — {detail}")
 
 
+# Android Chrome can hand files to the share sheet. Saving must not use it: a
+# 저장 button has to land a file, so these parts stub sharing ON and then check
+# the download plus a share-call count of zero.
+def stub_android_sharing(page, key="__shareCalls"):
+    page.evaluate("""(key) => {
+        window[key] = 0;
+        Object.defineProperty(navigator, 'canShare', { configurable: true, value: () => true });
+        Object.defineProperty(navigator, 'share', { configurable: true, value: async () => {
+            window[key] = window[key] + 1;
+        }});
+    }""", key)
+
+
+def share_calls(page, key="__shareCalls"):
+    return page.evaluate("(key) => window[key] || 0", key)
+
+
+def clear_sharing(page):
+    page.evaluate("() => { delete navigator.canShare; delete navigator.share; }")
+
+
 def free_port():
     s = socket.socket()
     s.bind(("127.0.0.1", 0))
@@ -138,7 +159,7 @@ def part_static():
         sw = r.read().decode()
     check("sw precaches app shell", "./index.html" in sw and "./vendor/pdf.min.js" in sw)
     check("sw precaches mp4 muxer", "./vendor/mp4-muxer.mjs" in sw)
-    check("sw cache is v1.3.6", "labs-tools-app-v1.3.6" in sw, sw[:120])
+    check("sw cache is v1.3.7", "labs-tools-app-v1.3.7" in sw, sw[:120])
 
     with urllib.request.urlopen(BASE + "/vendor/qrcode.min.js") as r:
         head = r.read(200).decode("utf-8", "ignore")
@@ -161,7 +182,7 @@ def part_ui(page):
     check("home spec strip is Korean", "도구" in home and "서버 전송" in home and "없음" in home, home[:200])
     check("home has no developer labels",
           not any(w in home for w in ("Offline Utility Suite", "TRANSFER", "INSTALL", "Index", "TOOLS")), home[:200])
-    check("home shows version 1.3.6", "v1.3.6" in home, home[-160:])
+    check("home shows version 1.3.7", "v1.3.7" in home, home[-160:])
     check("card tags are Korean", "[사진]" in home and "[영상]" in home and "[링크]" in home, home[:300])
     check("card tags keep NEW badge", "NEW" in home)
     shot(page, "01-home.png", True)
@@ -382,14 +403,36 @@ def part_exif(page):
     page.mouse.up()
     page.wait_for_timeout(150)
 
+    stub_android_sharing(page)
     with page.expect_download() as dl:
         page.click("#ex-jpg")
+    download = dl.value
     path = os.path.join(SHOTS, "masked.jpg")
-    dl.value.save_as(path)
+    download.save_as(path)
     data = open(path, "rb").read()
+    check("exif save downloads a file even with native sharing available", len(data) > 0, str(len(data)))
+    check("exif save never opens the share sheet", share_calls(page) == 0, str(share_calls(page)))
+    check("exif save keeps the masked jpg name", download.suggested_filename.endswith("-masked.jpg"),
+          download.suggested_filename)
+    check("exif save tells the user it was saved", "저장했어요" in page.inner_text("#toast"), page.inner_text("#toast"))
     check("jpg signature", data[:2] == b"\xff\xd8", data[:4])
     check("EXIF removed", b"Exif" not in data and b"TestCamMaker" not in data, "metadata found")
     check("saved size 800x600", png_size(data) == (800, 600), str(png_size(data)))
+
+    with page.expect_download() as dl:
+        page.click("#ex-png")
+    png = dl.value
+    ppath = os.path.join(SHOTS, "masked.png")
+    png.save_as(ppath)
+    pdata = open(ppath, "rb").read()
+    check("exif png save downloads with native sharing available", pdata[:8] == b"\x89PNG\r\n\x1a\n", pdata[:8])
+    check("exif png save never opens the share sheet", share_calls(page) == 0, str(share_calls(page)))
+
+    # 공유 stays the one place that opens the native sheet.
+    page.click("#ex-share")
+    page.wait_for_function("window.__shareCalls === 1")
+    check("exif share still opens the native share sheet", share_calls(page) == 1, str(share_calls(page)))
+    clear_sharing(page)
 
 
 # ---------------------------------------------------------------- compress
@@ -428,6 +471,20 @@ def part_compress(page):
             blob = z.read(n)
             check(f"{n} <= 2MB", len(blob) <= 2 * 1024 * 1024, str(len(blob)))
             check(f"{n} image opens", Image.open(__import__("io").BytesIO(blob)).size[0] > 0)
+    # A phone can share files natively; the 저장 icon must still download.
+    stub_android_sharing(page)
+    with page.expect_download() as dl:
+        page.locator("[data-save]").first.click()
+    one = dl.value
+    opath = os.path.join(SHOTS, "compressed-one.jpg")
+    one.save_as(opath)
+    odata = open(opath, "rb").read()
+    check("compress save downloads a file even with native sharing available", len(odata) > 0, str(len(odata)))
+    check("compress save never opens the share sheet", share_calls(page) == 0, str(share_calls(page)))
+    check("compress save keeps the -min name", "-min." in one.suggested_filename, one.suggested_filename)
+    check("compress save tells the user it was saved", "저장했어요" in page.inner_text("#toast"), page.inner_text("#toast"))
+    check("compress saved file opens", Image.open(opath).size[0] > 0)
+    clear_sharing(page)
 
     # explicit PNG inside the preset: JPG sources must come out as PNG under 2MB
     page.select_option("#cz-format", "png")
@@ -457,11 +514,17 @@ def part_pdf(page):
     check("2 pdf pages rendered", page.locator(".thumb-card").count() == 2)
     shot(page, "06-pdf-pages.png", True)
 
+    stub_android_sharing(page)
     with page.expect_download() as dl:
         page.locator("[data-dl]").first.click()
+    download = dl.value
     path = os.path.join(SHOTS, "pdf-page.png")
-    dl.value.save_as(path)
+    download.save_as(path)
     data = open(path, "rb").read()
+    check("pdf page save downloads a file even with native sharing available", len(data) > 0, str(len(data)))
+    check("pdf page save never opens the share sheet", share_calls(page) == 0, str(share_calls(page)))
+    check("pdf page save keeps the p.01 name", download.suggested_filename.endswith("-p01.png"),
+          download.suggested_filename)
     check("page png signature", data[:8] == b"\x89PNG\r\n\x1a\n", data[:8])
     check("page rendered large", png_size(data)[0] > 500, str(png_size(data)))
 
@@ -519,12 +582,27 @@ def part_resize(page):
     page.wait_for_timeout(200)
     shot(page, "08-resize-blur.png", True)
 
+    stub_android_sharing(page)
     with page.expect_download() as dl:
         page.click("#rs-png")
+    download = dl.value
     path = os.path.join(SHOTS, "resized.png")
-    dl.value.save_as(path)
+    download.save_as(path)
     data = open(path, "rb").read()
+    check("resize save downloads a file even with native sharing available", len(data) > 0, str(len(data)))
+    check("resize save never opens the share sheet", share_calls(page) == 0, str(share_calls(page)))
+    check("resize save keeps its png name", download.suggested_filename.endswith(".png"), download.suggested_filename)
     check("resized png 1080x1920", png_size(data) == (1080, 1920), str(png_size(data)))
+
+    with page.expect_download() as dl:
+        page.click("#rs-jpg")
+    jdata = dl.value
+    jpath = os.path.join(SHOTS, "resized.jpg")
+    jdata.save_as(jpath)
+    check("resize jpg save downloads with native sharing available",
+          open(jpath, "rb").read()[:2] == b"\xff\xd8")
+    check("resize jpg save never opens the share sheet", share_calls(page) == 0, str(share_calls(page)))
+    clear_sharing(page)
 
     # white fill corner should be white
     page.click('#rs-fill button[data-fill="white"]')
@@ -571,6 +649,21 @@ def part_watermark(page):
             blob = z.read(n)
             size = Image.open(__import__("io").BytesIO(blob)).size
             check(f"{n} keeps dimensions", size in [(800, 600), (1200, 800)], str(size))
+
+    stub_android_sharing(page)
+    with page.expect_download() as dl:
+        page.locator("#wm-results [data-save]").first.click()
+    download = dl.value
+    wpath2 = os.path.join(SHOTS, "watermarked.jpg")
+    download.save_as(wpath2)
+    wdata = open(wpath2, "rb").read()
+    check("watermark save downloads a file even with native sharing available", len(wdata) > 0, str(len(wdata)))
+    check("watermark save never opens the share sheet", share_calls(page) == 0, str(share_calls(page)))
+    check("watermark save keeps the -wm name", "-wm." in download.suggested_filename, download.suggested_filename)
+    check("watermark save tells the user it was saved", "저장했어요" in page.inner_text("#toast"), page.inner_text("#toast"))
+    check("watermark saved file keeps dimensions",
+          Image.open(wpath2).size in [(800, 600), (1200, 800)], str(Image.open(wpath2).size))
+    clear_sharing(page)
 
 
 # ---------------------------------------------------------------- vod

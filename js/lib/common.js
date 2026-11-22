@@ -167,6 +167,20 @@
     });
   }
 
+  // Encodes a canvas synchronously. A save has to finish inside the click:
+  // canvas.toBlob() is async, and on phones that can outlast the tap's user
+  // activation, after which the browser silently drops the download.
+  function canvasBlobSync(canvas, type, quality) {
+    var mime = type || 'image/png';
+    var url = canvas.toDataURL(mime, quality == null ? 0.92 : quality);
+    var comma = url.indexOf(',');
+    if (comma < 0) throw new Error('이미지를 저장할 수 없습니다.');
+    var bin = atob(url.slice(comma + 1));
+    var bytes = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return new Blob([bytes], { type: mime });
+  }
+
   // Loads a File/Blob as an ImageBitmap (or <img> fallback), honouring
   // EXIF orientation so the pixels we draw are already upright.
   function fileToBitmap(file) {
@@ -208,21 +222,6 @@
       return navigator.share({ files: [file], title: title || filename }).then(function () { return true; });
     }
     return Promise.resolve(false);
-  }
-
-  // One-tap save that uses the Android share sheet when available.
-  function saveOrShare(blob, filename, title) {
-    if (canShareFiles()) {
-      return shareBlob(blob, filename, title).then(function (shared) {
-        if (!shared) { download(blob, filename); toast('저장했어요'); }
-      }).catch(function (e) {
-        if (e && e.name === 'AbortError') return; // user dismissed the sheet
-        download(blob, filename);
-      });
-    }
-    download(blob, filename);
-    toast('저장했어요');
-    return Promise.resolve();
   }
 
   async function zipBlobs(entries, zipName) {
@@ -306,8 +305,9 @@
     $: $, $$: $$, esc: esc, el: el, bytes: bytes, clamp: clamp, uid: uid,
     debounce: debounce, stamp: stamp, baseName: baseName, extFor: extFor,
     toast: toast, busy: busy, loadScript: loadScript, ensureLib: ensureLib, vendor: vendor,
-    download: download, shareBlob: shareBlob, saveOrShare: saveOrShare, canShareFiles: canShareFiles,
-    canvasToBlob: canvasToBlob, fileToBitmap: fileToBitmap, readFile: readFile,
+    download: download, shareBlob: shareBlob, canShareFiles: canShareFiles,
+    canvasToBlob: canvasToBlob, canvasBlobSync: canvasBlobSync,
+    fileToBitmap: fileToBitmap, readFile: readFile,
     zipBlobs: zipBlobs, dropzone: dropzone, pickFiles: pickFiles, copyText: copyText
   };
   Labs.register = register;
