@@ -250,6 +250,7 @@ def main(argv=None):
         browser = p.chromium.launch(args=["--no-sandbox"])
         ctx = browser.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=2,
                                  is_mobile=True, has_touch=True, accept_downloads=True, locale="ko-KR")
+        ctx.grant_permissions(["clipboard-read", "clipboard-write"], origin=LIVE)
         page = ctx.new_page()
         page.on("pageerror", lambda e: ERRORS.append(f"pageerror: {e}"))
         page.on("console", lambda m: ERRORS.append(f"console: {m.text}") if m.type == "error" else None)
