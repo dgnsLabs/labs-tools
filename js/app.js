@@ -96,7 +96,7 @@
       '<section class="home">' +
       '<div class="hero">' +
       '<p class="hero-eyebrow"><span>오프라인 생활 도구</span><span class="rule"></span>' +
-      '<span class="hero-ver">v1.3.8</span></p>' +
+      '<span class="hero-ver">v1.4.0</span></p>' +
       '<h1>Labs Tools</h1>' +
       '<p>서버 없이, 폰에서 바로 쓰는 8가지 도구. 사진·PDF·링크·영상을 기기 안에서만 처리합니다.</p>' +
       '</div>' +
@@ -114,7 +114,7 @@
       '한 번 열어 두면 인터넷 없이도 동작합니다.</p>' +
       '<div id="install-slot"></div>' +
       '</div>' +
-      '<footer>v1.3.8 · 모든 변환은 이 브라우저 안에서만 이루어지며 파일은 어디에도 전송되지 않습니다.</footer>' +
+      '<footer>v1.4.0 · 모든 변환은 이 브라우저 안에서만 이루어지며 파일은 어디에도 전송되지 않습니다.</footer>' +
       '</section>';
   }
 
@@ -171,6 +171,7 @@
         if (!def || typeof def.mount !== 'function') throw new Error('도구를 초기화할 수 없습니다.');
         sec.innerHTML = '';
         def.mount(sec, tool);
+        U.enhanceRanges(sec);
         mounted[tool.id] = true;
       })
       .catch(function (err) {

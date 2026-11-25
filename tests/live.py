@@ -186,6 +186,62 @@ def part_save_buttons(page):
     clear_sharing(page)
 
 
+def part_ux(page):
+    """v1.4.0 인터페이스 업그레이드가 라이브에 있는지 확인한다."""
+    print("\n[ux] live toast stack, copy-to-check, value bubble, drop hint")
+    page.goto(LIVE + "#/tool/url")
+    page.wait_for_selector("#url-in")
+    page.fill("#url-in", "https://www.instagram.com/p/ABC123/?igsh=MTYxZg%3D%3D")
+    page.wait_for_selector("[data-copy]")
+    page.click("[data-copy]")
+    page.wait_for_function("() => document.querySelector('[data-copy]').classList.contains('is-copied')")
+    check("live copy button turns into a check", "복사됨" in page.inner_text("[data-copy]"),
+          page.inner_text("[data-copy]"))
+    page.wait_for_timeout(1700)
+    check("live copy button returns to 복사", page.inner_text("[data-copy]").strip() == "복사",
+          page.inner_text("[data-copy]"))
+
+    page.evaluate("""() => {
+        Labs.util.toast('1'); Labs.util.toast('2'); Labs.util.toast('3'); Labs.util.toast('4');
+    }""")
+    page.wait_for_timeout(320)
+    check("live toast stack caps at three", page.locator("#toast .toast").count() == 3,
+          str(page.locator("#toast .toast").count()))
+    check("live toasts carry icon, timer and close",
+          page.locator("#toast .toast-ico").count() == 3 and
+          page.locator("#toast .toast-life").count() == 3 and
+          page.locator("#toast .toast-x").count() == 3)
+    page.screenshot(path=os.path.join(SHOTS, "live-ux-toast.png"))
+    page.evaluate("() => { const s = document.getElementById('toast'); s.innerHTML = ''; s.__toasts = []; }")
+
+    page.goto(LIVE + "#/tool/compress")
+    page.wait_for_selector("#cz-quality")
+    check("live range carries a value bubble", page.evaluate(
+        "() => { const i = document.querySelector('#cz-quality'); const w = i.closest('.range-wrap'); "
+        "return !!(w && w.querySelector('.range-bubble')); }"))
+    box = page.locator("#cz-quality").bounding_box()
+    page.mouse.move(box["x"] + box["width"] * 0.32, box["y"] + box["height"] / 2)
+    page.mouse.down()
+    page.wait_for_timeout(180)
+    check("live bubble shows during a drag", page.evaluate(
+        "() => document.querySelector('#cz-quality').closest('.range-wrap').classList.contains('is-live')"))
+    page.screenshot(path=os.path.join(SHOTS, "live-ux-bubble.png"))
+    page.mouse.up()
+    page.wait_for_timeout(900)
+
+    page.evaluate("""() => {
+        const el = document.querySelector('#cz-drop');
+        const dt = new DataTransfer();
+        dt.items.add(new File([new Uint8Array([1])], 'a.png', { type: 'image/png' }));
+        el.dispatchEvent(new DragEvent('dragenter', { bubbles: true, cancelable: true, dataTransfer: dt }));
+    }""")
+    page.wait_for_timeout(220)
+    check("live dropzone invites the drop", page.inner_text("#cz-drop b").strip() == "놓으면 바로 열려요",
+          page.inner_text("#cz-drop b"))
+    page.evaluate("""() => document.querySelector('#cz-drop').dispatchEvent(new DragEvent('dragleave', {
+        bubbles: true, cancelable: true, dataTransfer: new DataTransfer() }))""")
+
+
 def main(argv=None):
     argv = argv or []
     saves_only = "saves" in argv
@@ -204,7 +260,7 @@ def main(argv=None):
         home = page.inner_text("#home")
         check("live home has 8 cards", page.locator(".tool-card").count() == 8)
         check("live home uses plain Korean labels", "서버 전송" in home and "앱처럼 쓰기" in home and "[영상]" in home, home[:120])
-        check("live home shows v1.3.8", "v1.3.8" in home)
+        check("live home shows v1.4.0", "v1.4.0" in home)
         page.add_style_tag(content=".appbar{position:static !important}")
         page.screenshot(path=os.path.join(SHOTS, "live-home.png"), full_page=True)
 
@@ -212,6 +268,8 @@ def main(argv=None):
             part_save_buttons(page)
             browser.close()
             return finish()
+
+        part_ux(page)
 
         page.goto(LIVE + "#/tool/qr")
         page.wait_for_selector("#qr-text")
@@ -251,7 +309,7 @@ def main(argv=None):
             const t = await (await fetch('sw.js', {cache: 'no-store'})).text();
             return (t.match(/labs-tools-app-v[0-9.]+/) || [''])[0];
         }""")
-        check("live sw cache is v1.3.8", swver == "labs-tools-app-v1.3.8", swver)
+        check("live sw cache is v1.4.0", swver == "labs-tools-app-v1.4.0", swver)
 
         # 소리 없는 샘플 → WebCodecs 가속 경로
         page.set_input_files("#vod-file", os.path.join(FIX, "sample-silent.mp4"))

@@ -5,7 +5,7 @@ Usage:
   python3 tests/e2e.py            # all parts
   python3 tests/e2e.py ui url qr  # selected parts
 
-Parts: static, ui, url, qr, exif, compress, pdf, resize, watermark, vod, offline
+Parts: static, ui, ux, url, qr, exif, compress, pdf, resize, watermark, vod, offline
 
 The script boots a throwaway `python3 -m http.server` on the repo root,
 drives a mobile-sized Chromium, asserts behaviour and writes screenshots
@@ -179,7 +179,7 @@ def part_static():
         sw = r.read().decode()
     check("sw precaches app shell", "./index.html" in sw and "./vendor/pdf.min.js" in sw)
     check("sw precaches mp4 muxer", "./vendor/mp4-muxer.mjs" in sw)
-    check("sw cache is v1.3.8", "labs-tools-app-v1.3.8" in sw, sw[:120])
+    check("sw cache is v1.4.0", "labs-tools-app-v1.4.0" in sw, sw[:120])
 
     with urllib.request.urlopen(BASE + "/vendor/qrcode.min.js") as r:
         head = r.read(200).decode("utf-8", "ignore")
@@ -202,7 +202,7 @@ def part_ui(page):
     check("home spec strip is Korean", "도구" in home and "서버 전송" in home and "없음" in home, home[:200])
     check("home has no developer labels",
           not any(w in home for w in ("Offline Utility Suite", "TRANSFER", "INSTALL", "Index", "TOOLS")), home[:200])
-    check("home shows version 1.3.8", "v1.3.8" in home, home[-160:])
+    check("home shows version 1.4.0", "v1.4.0" in home, home[-160:])
     check("card tags are Korean", "[사진]" in home and "[영상]" in home and "[링크]" in home, home[:300])
     check("card tags keep NEW badge", "NEW" in home)
     shot(page, "01-home.png", True)
@@ -227,6 +227,253 @@ def part_ui(page):
     after = page.evaluate("document.documentElement.dataset.theme")
     check("theme toggles", before != after, f"{before} -> {after}")
     page.click("#theme-btn")
+
+
+# ---------------------------------------------------------------- ux
+def clear_toasts(page):
+    page.evaluate("""() => {
+        const s = document.getElementById('toast');
+        if (!s) return;
+        s.innerHTML = '';
+        s.__toasts = [];
+    }""")
+
+
+def part_ux(host):
+    print("\n[ux] toast stack, copy-to-check, drop feedback, value bubble, motion")
+    # Its own page: the tools keep their mounted state, so the checks below must
+    # not leave a dropped file or a moved slider behind for the other parts.
+    page = host.context.new_page()
+    attach(page)
+    page.goto(BASE + "/")
+    page.wait_for_selector(".tool-card")
+
+    # 1) 토스트 스택 — 기존 U.toast(msg, kind, ms) 시그니처 그대로
+    page.evaluate("""() => {
+        Labs.util.toast('첫 번째', null, 4000);
+        Labs.util.toast('두 번째', null, 4000);
+        Labs.util.toast('세 번째', null, 4000);
+        Labs.util.toast('네 번째', null, 4000);
+    }""")
+    page.wait_for_timeout(260)
+    check("toast stack keeps at most 3", page.locator("#toast .toast").count() == 3,
+          str(page.locator("#toast .toast").count()))
+    texts = page.eval_on_selector_all("#toast .toast-msg", "els => els.map(e => e.textContent)")
+    check("the oldest toast makes room for the newest", texts == ["두 번째", "세 번째", "네 번째"], str(texts))
+    check("the stack still reads as one status text", "네 번째" in page.inner_text("#toast"), page.inner_text("#toast"))
+    check("each toast carries icon, timer bar and close",
+          page.locator("#toast .toast-ico svg").count() == 3 and
+          page.locator("#toast .toast-life").count() == 3 and
+          page.locator("#toast .toast-x").count() == 3)
+    life = page.eval_on_selector("#toast .toast-life", "el => getComputedStyle(el).animationDuration")
+    check("the time bar runs for the toast lifetime", life not in ("", "0s"), life)
+    dash = page.eval_on_selector("#toast .toast-ico svg path", "el => getComputedStyle(el).strokeDasharray")
+    check("the icon draws itself in", dash not in ("none", ""), dash)
+    stack_boxes = page.evaluate("""() => {
+        const items = Array.from(document.querySelectorAll('#toast .toast'));
+        return items.map(e => e.getBoundingClientRect().top);
+    }""")
+    check("toasts stack upward without overlapping",
+          len(stack_boxes) == 3 and stack_boxes[0] < stack_boxes[1] < stack_boxes[2], str(stack_boxes))
+    shot(page, "13-ux-toast.png", False)
+
+    page.locator("#toast .toast-x").last.click()
+    page.wait_for_timeout(400)
+    check("the close button dismisses one toast", page.locator("#toast .toast").count() == 2,
+          str(page.locator("#toast .toast").count()))
+
+    box = page.locator("#toast .toast").last.bounding_box()
+    page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+    page.mouse.down()
+    page.mouse.move(box["x"] + box["width"] / 2 + 150, box["y"] + box["height"] / 2, steps=8)
+    page.mouse.up()
+    page.wait_for_timeout(420)
+    check("a sideways swipe dismisses a toast", page.locator("#toast .toast").count() == 1,
+          str(page.locator("#toast .toast").count()))
+
+    page.evaluate("() => Labs.util.toast('저장하지 못했어요', 'err', 600)")
+    page.wait_for_timeout(200)
+    check("error toasts keep their warning kind", page.locator("#toast .toast.err").count() == 1,
+          str(page.locator("#toast .toast.err").count()))
+    page.wait_for_timeout(1200)
+    check("a toast leaves on its own after its lifetime", page.locator("#toast .toast.err").count() == 0,
+          str(page.locator("#toast .toast").count()))
+    clear_toasts(page)
+
+    # 2) 복사 → 체크 전환 + 빛 스윕
+    page.goto(BASE + "/#/tool/url")
+    page.wait_for_selector("#url-in")
+    page.fill("#url-in", "https://www.instagram.com/p/ABC123/?igsh=MTYxZg%3D%3D&utm_source=ig_web_copy_link")
+    page.wait_for_selector("[data-copy]")
+    page.click("[data-copy]")
+    page.wait_for_function("() => document.querySelector('[data-copy]').classList.contains('is-copied')")
+    copied = page.evaluate("""() => {
+        const b = document.querySelector('[data-copy]');
+        const r = document.querySelector('.result');
+        return { text: b.innerText.replace(/\\s+/g, ' ').trim(), icon: !!b.querySelector('svg'),
+                 swept: r.classList.contains('is-swept'), clip: null };
+    }""")
+    check("the copy button turns into a check", copied["icon"] and "복사됨" in copied["text"], str(copied))
+    check("the cleaned link really reaches the clipboard",
+          page.evaluate("() => navigator.clipboard.readText()").strip() == "https://www.instagram.com/p/ABC123/",
+          page.evaluate("() => navigator.clipboard.readText()"))
+    check("the result box sweeps with light", copied["swept"], str(copied))
+    shot(page, "14-ux-copied.png", False)
+    page.wait_for_timeout(1700)
+    restored = page.evaluate("""() => {
+        const b = document.querySelector('[data-copy]');
+        return { copied: b.classList.contains('is-copied'), text: b.innerText.trim(),
+                 swept: document.querySelector('.result').classList.contains('is-swept') };
+    }""")
+    check("the button returns to 복사", not restored["copied"] and restored["text"] == "복사", str(restored))
+    check("the sweep does not linger", not restored["swept"], str(restored))
+
+    page.click("#copy-all")
+    page.wait_for_function("() => document.querySelector('#copy-all').classList.contains('is-copied')")
+    check("copy all gives the same feedback",
+          "복사됨" in page.inner_text("#copy-all"), page.inner_text("#copy-all"))
+    page.wait_for_timeout(1700)
+
+    # 3) 드롭존 드래그·착지 피드백
+    page.goto(BASE + "/#/tool/compress")
+    page.wait_for_selector("#cz-drop")
+    page.evaluate("""() => {
+        const el = document.querySelector('#cz-drop');
+        const dt = new DataTransfer();
+        dt.items.add(new File([new Uint8Array([1])], 'hover.png', { type: 'image/png' }));
+        el.dispatchEvent(new DragEvent('dragenter', { bubbles: true, cancelable: true, dataTransfer: dt }));
+        el.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: dt }));
+    }""")
+    page.wait_for_timeout(160)
+    over = page.evaluate("""() => {
+        const el = document.querySelector('#cz-drop');
+        const cs = getComputedStyle(el);
+        return { over: el.classList.contains('is-over'), label: el.querySelector('b').textContent.trim(),
+                 border: cs.borderTopStyle, icon: getComputedStyle(el.querySelector('svg')).transform };
+    }""")
+    check("dragging a file over swaps the guidance line", over["label"] == "놓으면 바로 열려요", str(over))
+    check("the dashed border turns solid", over["border"] == "solid", str(over))
+    check("the upload icon lifts", over["icon"] not in ("none", "matrix(1, 0, 0, 1, 0, 0)"), str(over))
+
+    page.evaluate("""() => {
+        document.querySelector('#cz-drop').dispatchEvent(new DragEvent('dragleave', {
+            bubbles: true, cancelable: true, dataTransfer: new DataTransfer(),
+        }));
+    }""")
+    page.wait_for_timeout(160)
+    left = page.evaluate("""() => {
+        const el = document.querySelector('#cz-drop');
+        return { over: el.classList.contains('is-over'), label: el.querySelector('b').textContent.trim(),
+                 border: getComputedStyle(el).borderTopStyle };
+    }""")
+    check("leaving restores the dropzone", not left["over"] and left["label"] == "이미지 선택" and left["border"] == "dashed", str(left))
+
+    page.evaluate("""async () => {
+        const c = document.createElement('canvas');
+        c.width = 64; c.height = 48;
+        const x = c.getContext('2d');
+        x.fillStyle = '#ff5a1f'; x.fillRect(0, 0, 64, 48);
+        const blob = await new Promise(r => c.toBlob(r, 'image/png'));
+        const dt = new DataTransfer();
+        dt.items.add(new File([blob], 'drop-test.png', { type: 'image/png' }));
+        const el = document.querySelector('#cz-drop');
+        el.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt }));
+        window.__landed = el.classList.contains('is-dropped');
+    }""")
+    check("a dropped file bounces the zone", page.evaluate("() => window.__landed"))
+    page.wait_for_function("() => document.querySelector('#cz-results').innerText.includes('drop-test')", timeout=60000)
+    check("the dropped file is picked up and processed",
+          page.locator("#cz-results .item").count() >= 1, str(page.locator("#cz-results .item").count()))
+    page.wait_for_timeout(700)
+
+    # 4) 값 말풍선 슬라이더
+    page.wait_for_selector("#cz-quality")
+    wrapped = page.evaluate("""() => {
+        const i = document.querySelector('#cz-quality');
+        const w = i.closest('.range-wrap');
+        const b = w && w.querySelector('.range-bubble');
+        return { wrap: !!w, bubble: !!b, live: w ? w.classList.contains('is-live') : null,
+                 attrs: [i.id, i.min, i.max, i.step], value: i.value,
+                 text: b ? b.textContent.trim() : '' };
+    }""")
+    check("every range gets a value bubble", wrapped["wrap"] and wrapped["bubble"], str(wrapped))
+    check("the range keeps its id, bounds and step", wrapped["attrs"] == ["cz-quality", "10", "100", "1"], str(wrapped))
+    check("the bubble stays hidden at rest", wrapped["live"] is False, str(wrapped))
+
+    box = page.locator("#cz-quality").bounding_box()
+    y = box["y"] + box["height"] / 2
+    page.mouse.move(box["x"] + box["width"] * 0.18, y)
+    page.mouse.down()
+    page.wait_for_timeout(90)
+    live = page.evaluate("""() => {
+        const i = document.querySelector('#cz-quality');
+        const w = i.closest('.range-wrap');
+        const b = w.querySelector('.range-bubble');
+        const v = i.closest('.field').querySelector('.val');
+        return { live: w.classList.contains('is-live'), bubble: b.textContent.trim(), val: v.textContent.trim(),
+                 left: b.style.left, tilt: b.style.getPropertyValue('--tilt'), opacity: getComputedStyle(b).opacity };
+    }""")
+    check("the bubble appears while dragging", live["live"] and float(live["opacity"] or 0) > 0.5, str(live))
+    check("the bubble shows the same value as the field label", live["bubble"] == live["val"], str(live))
+    first_left = live["left"]
+    shot(page, "15-ux-range-bubble.png", False)
+
+    page.mouse.move(box["x"] + box["width"] * 0.86, y, steps=6)
+    page.wait_for_timeout(30)
+    moved = page.evaluate("""() => {
+        const b = document.querySelector('.range-bubble');
+        return { left: b.style.left, tilt: b.style.getPropertyValue('--tilt').trim() };
+    }""")
+    check("the bubble rides above the handle", moved["left"] != first_left, f"{first_left} -> {moved['left']}")
+    lean = abs(float((moved["tilt"] or "0deg").replace("deg", "") or 0))
+    check("the bubble leans with the drag speed", lean > 1, moved["tilt"])
+    page.mouse.up()
+    page.wait_for_timeout(200)
+    upright = page.evaluate("() => document.querySelector('.range-bubble').style.getPropertyValue('--tilt').trim()")
+    check("it springs upright once the drag stops", upright in ("0deg", "0.0deg"), upright)
+    page.wait_for_timeout(700)
+    check("it hides after the drag", page.locator(".range-wrap.is-live").count() == 0,
+          str(page.locator(".range-wrap.is-live").count()))
+
+    page.evaluate("""() => {
+        const i = document.querySelector('#cz-quality');
+        i.value = '50';
+        i.dispatchEvent(new Event('input', { bubbles: true }));
+        i.dispatchEvent(new Event('change', { bubbles: true }));
+    }""")
+    page.wait_for_timeout(150)
+    check("the range still drives the tool", page.inner_text("#cz-q-val").strip() == "50%", page.inner_text("#cz-q-val"))
+
+    # 5) 촉각 피드백 · 진행률 광택 · 모션 줄임
+    page.wait_for_selector("#cz-preset")
+    page.locator("#cz-preset").scroll_into_view_if_needed()
+    bb = page.locator("#cz-preset").bounding_box()
+    page.mouse.move(bb["x"] + bb["width"] / 2, bb["y"] + bb["height"] / 2)
+    page.mouse.down()
+    page.wait_for_timeout(140)
+    pressed = page.evaluate("() => getComputedStyle(document.querySelector('#cz-preset')).transform")
+    page.mouse.up()
+    try:
+        pressed_scale = float(pressed.split("(")[1].split(",")[0]) if pressed.startswith("matrix") else 1.0
+    except (IndexError, ValueError):
+        pressed_scale = 1.0
+    check("a pressed button sinks a little", pressed_scale < 0.995, pressed)
+
+    css = urllib.request.urlopen(BASE + "/css/style.css").read().decode("utf-8")
+    check("segmented tabs animate between states", ".seg button:active" in css and ".seg button.is-on" in css)
+    check("the progress fill carries a sheen", ".bar > i::after" in css and "bar-sheen" in css)
+    check("the pattern source is credited", "lucian-uxui-prompt" in css.split("*/")[0])
+    check("reduced motion is handled", "prefers-reduced-motion: reduce" in css and ".toast-life { display: none; }" in css)
+
+    page.emulate_media(reduced_motion="reduce")
+    page.evaluate("() => Labs.util.toast('모션 줄임', null, 3000)")
+    page.wait_for_timeout(200)
+    check("reduced motion drops the timer bar",
+          page.evaluate("() => getComputedStyle(document.querySelector('#toast .toast-life')).display") == "none",
+          page.evaluate("() => getComputedStyle(document.querySelector('#toast .toast-life')).display"))
+    page.emulate_media(reduced_motion="no-preference")
+    clear_toasts(page)
+    page.close()
 
 
 # ---------------------------------------------------------------- url
@@ -1237,7 +1484,7 @@ def part_offline(page, context):
 
 # ---------------------------------------------------------------- main
 def main():
-    parts = sys.argv[1:] or ["static", "ui", "url", "qr", "exif", "compress", "pdf", "resize", "watermark", "vod", "offline"]
+    parts = sys.argv[1:] or ["static", "ui", "ux", "url", "qr", "exif", "compress", "pdf", "resize", "watermark", "vod", "offline"]
     server = start_server()
     print(f"serving {ROOT} at {BASE}")
     try:
@@ -1258,7 +1505,7 @@ def main():
             if "static" in parts:
                 part_static()
             for name, fn in [
-                ("ui", part_ui), ("url", part_url), ("qr", part_qr), ("exif", part_exif),
+                ("ui", part_ui), ("ux", part_ux), ("url", part_url), ("qr", part_qr), ("exif", part_exif),
                 ("compress", part_compress), ("pdf", part_pdf), ("resize", part_resize),
                 ("watermark", part_watermark), ("vod", part_vod),
             ]:

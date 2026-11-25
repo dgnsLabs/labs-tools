@@ -728,7 +728,7 @@
       var btn = $('#vod-copy-link', warnEl);
       if (btn) {
         btn.addEventListener('click', function () {
-          U.copyText(location.href).then(function () {
+          U.copyText(location.href, btn).then(function () {
             U.toast('주소를 복사했어요. PC 브라우저에 붙여넣어 주세요');
           }).catch(function () { U.toast('복사 권한이 없어요', 'err'); });
         });

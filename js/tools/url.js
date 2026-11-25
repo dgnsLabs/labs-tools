@@ -182,14 +182,14 @@
 
       results.querySelectorAll('[data-copy]').forEach(function (b) {
         b.addEventListener('click', function () {
-          U.copyText(b.getAttribute('data-copy')).then(function () {
+          U.copyText(b.getAttribute('data-copy'), b).then(function () {
             U.toast('복사했어요');
           }).catch(function () { U.toast('복사 권한이 없어요. 길게 눌러 복사해 주세요.', 'err'); });
         });
       });
       var all = $('#copy-all', results);
       if (all) all.addEventListener('click', function () {
-        U.copyText(allClean).then(function () { U.toast('전체 복사했어요'); })
+        U.copyText(allClean, all).then(function () { U.toast('전체 복사했어요'); })
           .catch(function () { U.toast('복사 권한이 없어요.', 'err'); });
       });
     }

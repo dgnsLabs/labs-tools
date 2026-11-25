@@ -6,6 +6,10 @@
    · no islands — flat surfaces, 1px borders, radii 2–6px only
    · one accent colour, used as a signal: LED, tags, primary, focus
    · monospace for numbers, tags and specs; sans for reading text
+
+   Interaction patterns (toast stack, copy-to-check, drop landing, tilting
+   value bubble, tactile controls) adapted from Seokwoooo/lucian-uxui-prompt
+   (MIT), re-cut in the tokens below.
    ============================================================ */
 *, *::before, *::after { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; }
@@ -399,12 +403,14 @@ input[type="color"] {
   color: var(--text);
   font-size: 12.5px; font-weight: 650; letter-spacing: .01em;
   cursor: pointer;
-  transition: background .12s ease, border-color .12s ease, color .12s ease;
+  transition: background .13s ease, border-color .13s ease, color .13s ease,
+    transform .12s cubic-bezier(.3, 1.4, .5, 1);
   text-decoration: none;
   white-space: nowrap;
 }
 .btn:hover { border-color: var(--muted); }
-.btn:active { background: var(--border); }
+.btn:active { background: var(--border); transform: scale(.97); }
+.btn:disabled:active { transform: none; }
 .btn:disabled { opacity: .45; cursor: not-allowed; }
 .btn.primary {
   background: var(--accent);
@@ -436,8 +442,10 @@ input[type="color"] {
   flex: 1; min-height: 34px; padding: 6px 8px;
   border: 0; border-radius: 2px; background: transparent;
   color: var(--muted); font-size: 12px; font-weight: 600; cursor: pointer;
-  transition: background .12s ease, color .12s ease;
+  transition: background .18s ease, color .18s ease, transform .12s ease,
+    box-shadow .26s cubic-bezier(.3, 1.25, .45, 1);
 }
+.seg button:active { transform: scale(.97); }
 .seg button.is-on {
   background: var(--surface-2); color: var(--text);
   box-shadow: inset 0 -2px 0 var(--accent);
@@ -465,10 +473,19 @@ input[type="color"] {
   background: transparent;
   text-align: center;
   cursor: pointer;
-  transition: border-color .12s ease, background .12s ease;
+  transition: border-color .18s ease, background .18s ease;
 }
 .drop.is-over, .drop:active { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 6%, transparent); }
-.drop svg { width: 24px; height: 24px; fill: none; stroke: var(--muted); stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.drop svg {
+  width: 24px; height: 24px; fill: none; stroke: var(--muted); stroke-width: 1.7;
+  stroke-linecap: round; stroke-linejoin: round;
+  transition: transform .3s cubic-bezier(.3, 1.5, .5, 1), stroke .18s ease;
+}
+/* 드래그해서 들어오면 점선이 실선으로 살아나고 아이콘이 떠오릅니다 */
+.drop.is-over { border-style: solid; background: color-mix(in srgb, var(--accent) 7%, transparent); }
+.drop.is-over svg { transform: translateY(-4px) scale(1.06); stroke: var(--accent); }
+/* 파일이 자리를 잡는 짧은 착지 바운스 */
+.drop.is-dropped { animation: drop-land .46s cubic-bezier(.3, 1.4, .5, 1); }
 .drop b { font-size: 12.5px; font-weight: 650; }
 .drop span { font-size: 10.5px; color: var(--muted); }
 
@@ -529,6 +546,8 @@ input[type="color"] {
 
 /* ---------------- result / code ---------------- */
 .result {
+  position: relative;
+  overflow: hidden;
   padding: 10px 11px;
   background: var(--bg-soft);
   border: 1px solid var(--border);
@@ -542,6 +561,7 @@ input[type="color"] {
 .result.empty { color: var(--muted); font-family: inherit; font-size: 12px; }
 
 .code {
+  position: relative;
   margin: 0;
   padding: 10px 11px;
   background: var(--field);
@@ -580,7 +600,18 @@ input[type="color"] {
 /* ---------------- progress ---------------- */
 .progress-wrap { margin-top: 10px; }
 .bar { height: 4px; border-radius: 1px; background: var(--surface-2); overflow: hidden; }
-.bar > i { display: block; height: 100%; width: 0%; background: var(--accent); border-radius: inherit; transition: width .25s ease; }
+.bar > i {
+  position: relative; display: block; overflow: hidden;
+  height: 100%; width: 0%; background: var(--accent); border-radius: inherit;
+  transition: width .25s ease;
+}
+/* 채워지는 동안 막대 위로 은은한 광택이 지나갑니다 */
+.bar > i::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(100deg, transparent 30%, rgba(255, 255, 255, .42) 50%, transparent 70%);
+  background-size: 240% 100%;
+  animation: bar-sheen 1.5s linear infinite;
+}
 .bar-row {
   display: flex; justify-content: space-between;
   font-family: var(--mono); font-size: 9.5px; color: var(--muted);
@@ -645,21 +676,134 @@ input[type="color"] {
 .empty-state { text-align: center; padding: 26px 12px; color: var(--muted); font-size: 12px; line-height: 1.65; }
 .empty-state svg { width: 30px; height: 30px; margin-bottom: 6px; fill: none; stroke: var(--faint); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
 
-.toast {
+/* ---------------- toast stack ---------------- */
+.toast-stack {
   position: fixed; left: 50%; bottom: calc(22px + env(safe-area-inset-bottom));
-  transform: translate(-50%, 12px);
   z-index: 90;
-  max-width: min(88vw, 420px);
-  padding: 10px 15px;
+  display: flex; flex-direction: column; gap: 7px;
+  width: min(88vw, 420px);
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+.toast {
+  position: relative;
+  display: flex; align-items: center; gap: 9px;
+  padding: 10px 8px 10px 12px;
   border-radius: 3px;
   background: var(--text); color: var(--bg);
-  font-size: 12px; font-weight: 600; letter-spacing: .01em; text-align: center;
+  font-size: 12px; font-weight: 600; letter-spacing: .01em; line-height: 1.4;
   box-shadow: 0 8px 28px rgba(0, 0, 0, .45);
-  opacity: 0; pointer-events: none;
-  transition: opacity .16s ease, transform .16s ease;
+  opacity: 1;
+  transform: translate3d(var(--dx, 0px), var(--dy, 0px), 0) scale(var(--sc, 1));
+  transition: transform .42s cubic-bezier(.22, 1.32, .38, 1), opacity .26s ease;
+  pointer-events: auto; touch-action: pan-y;
+  user-select: none; -webkit-user-select: none;
+  cursor: grab;
+  overflow: hidden;
 }
-.toast.show { opacity: 1; transform: translate(-50%, 0); }
+.toast.is-dragging { transition: opacity .16s ease; cursor: grabbing; }
+.toast.is-out { transition: transform .2s cubic-bezier(.4, 0, .7, 1), opacity .2s ease; }
 .toast.err { background: var(--danger); color: #140505; }
+
+.toast-ico {
+  flex: none; display: inline-flex; align-items: center; justify-content: center;
+  width: 17px; height: 17px; color: var(--accent);
+}
+.toast.err .toast-ico { color: #140505; }
+.toast-ico svg {
+  width: 17px; height: 17px; fill: none; stroke: currentColor;
+  stroke-width: 2.1; stroke-linecap: round; stroke-linejoin: round;
+}
+.toast-ico svg path {
+  stroke-dasharray: 1; stroke-dashoffset: 1;
+  animation: toast-draw .42s cubic-bezier(.6, 0, .3, 1) .1s forwards;
+}
+
+.toast-msg { flex: 1; min-width: 0; word-break: keep-all; }
+
+.toast-x {
+  flex: none; width: 24px; height: 24px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 0; border-radius: 2px; background: transparent;
+  color: inherit; opacity: .5; cursor: pointer;
+  transition: opacity .14s ease, background .14s ease;
+}
+.toast-x:hover, .toast-x:active { opacity: 1; background: color-mix(in srgb, currentColor 14%, transparent); }
+.toast-x svg {
+  width: 11px; height: 11px; fill: none; stroke: currentColor;
+  stroke-width: 2.4; stroke-linecap: round;
+}
+
+.toast-life {
+  position: absolute; left: 0; right: 0; bottom: 0; height: 2px;
+  background: var(--accent); opacity: .85;
+  transform-origin: 0 50%;
+  animation-name: toast-life; animation-timing-function: linear; animation-fill-mode: forwards;
+}
+.toast.err .toast-life { background: #140505; opacity: .5; }
+
+/* ---------------- copy → check + sweep ---------------- */
+.btn.is-copied {
+  color: var(--accent-text);
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+}
+.btn.primary.is-copied { color: var(--accent-ink); background: var(--accent); }
+.btn.is-copied svg {
+  width: 13px; height: 13px; fill: none; stroke: currentColor;
+  stroke-width: 2.3; stroke-linecap: round; stroke-linejoin: round;
+}
+.btn.is-copied svg path {
+  stroke-dasharray: 1; stroke-dashoffset: 1;
+  animation: toast-draw .34s cubic-bezier(.6, 0, .3, 1) .04s forwards;
+}
+.result::after, .code::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(100deg,
+    transparent 24%, color-mix(in srgb, var(--accent) 26%, transparent) 50%, transparent 76%);
+  transform: translateX(-115%);
+}
+.result.is-swept::after, .code.is-swept::after {
+  animation: copy-sweep .62s cubic-bezier(.4, 0, .2, 1);
+}
+
+/* ---------------- tilting value bubble ---------------- */
+.range-wrap { position: relative; display: block; }
+.range-bubble {
+  position: absolute; bottom: calc(100% + 1px); left: 0; z-index: 3;
+  display: block; padding: 4px 8px;
+  background: var(--text); color: var(--bg);
+  border-radius: 3px;
+  font-family: var(--mono); font-size: 10.5px; font-weight: 600; letter-spacing: .02em;
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, .3);
+  transform-origin: 50% 100%;
+  transform: translateX(-50%) translateY(4px) scale(.86) rotate(var(--tilt, 0deg));
+  opacity: 0; pointer-events: none;
+  transition: opacity .16s ease, transform .42s cubic-bezier(.24, 1.5, .4, 1);
+}
+.range-bubble::after {
+  content: ""; position: absolute; left: 50%; bottom: -3px;
+  width: 7px; height: 7px; margin-left: -3.5px; border-radius: 1px;
+  background: inherit; transform: rotate(45deg);
+}
+.range-wrap.is-live .range-bubble {
+  opacity: 1;
+  transform: translateX(-50%) rotate(var(--tilt, 0deg));
+}
+.range-wrap.is-drag .range-bubble { transition: opacity .12s ease, transform .1s linear; }
+
+/* ---------------- motion keyframes ---------------- */
+@keyframes toast-draw { to { stroke-dashoffset: 0; } }
+@keyframes toast-life { from { transform: scaleX(1); } to { transform: scaleX(0); } }
+@keyframes copy-sweep { to { transform: translateX(115%); } }
+@keyframes bar-sheen { from { background-position: 140% 0; } to { background-position: -120% 0; } }
+@keyframes drop-land {
+  0% { transform: scale(1); }
+  34% { transform: translateY(2px) scale(1.02, .965); }
+  64% { transform: translateY(-1px) scale(.994, 1.006); }
+  100% { transform: none; }
+}
 
 .visually-hidden {
   position: absolute !important; width: 1px; height: 1px;
@@ -677,10 +821,16 @@ input[type="color"] {
 
 @media (prefers-reduced-motion: reduce) {
   * { animation-duration: .01ms !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
+  .toast-life { display: none; }
+  .bar > i::after { display: none; }
+  .range-bubble, .range-wrap.is-drag .range-bubble { transition: none !important; }
+  .drop.is-over svg, .drop.is-dropped, #vod-drop.is-over .vod-pick svg, #vod-drop.is-dropped .vod-pick { transform: none; animation: none; }
 }
 
 .vod-pick { width: 100%; color: var(--text); }
-#vod-drop.is-over .vod-pick { border-color: var(--accent); }
+#vod-drop.is-over .vod-pick { border-style: solid; border-color: var(--accent); background: color-mix(in srgb, var(--accent) 7%, transparent); }
+#vod-drop.is-over .vod-pick svg { transform: translateY(-4px) scale(1.06); stroke: var(--accent); }
+#vod-drop.is-dropped .vod-pick { animation: drop-land .46s cubic-bezier(.3, 1.4, .5, 1); }
 .vod-source { padding: 10px 0; }
 .vod-source .grow { min-width: 0; overflow-wrap: anywhere; }
 .vod-source .hint { margin: 3px 0 0; }
